@@ -116,3 +116,52 @@ class RouteDetail(BaseModel):
 class RouteResponse(BaseModel):
     route: RouteDetail | None
     reason: str | None = None
+
+
+# ── Hospital scoring / assignment ─────────────────────────────────────────────
+
+class FactorScoreResponse(BaseModel):
+    """One factor's contribution to a hospital's total score."""
+    raw: float           # Actual measurement before normalization
+    penalty: float       # Mapped to [0, 1]: 0 = ideal, 1 = worst
+    weight: float        # Condition-keyed weight applied
+    contribution: float  # penalty × weight — this factor's slice of total_score
+
+
+class ScoredHospitalResponse(BaseModel):
+    """A hospital that passed filtering, with its route and explainable breakdown."""
+    hospital_id: int
+    hospital_name: str
+    rank: int            # 1 = best (lowest score) — rank 1 is the assignment winner
+    total_score: float   # Weighted sum of penalty factors; lower is better; ∈ [0, 1]
+    travel_time_s: float
+    distance_m: float
+    path: list[RouteNode]
+    # Per-factor breakdown keyed by name: travel_time, bed_availability,
+    # icu_availability, load_factor, specialization
+    factors: dict[str, FactorScoreResponse]
+
+
+class FilteredHospitalResponse(BaseModel):
+    """A hospital that was excluded before scoring, with its disqualification reason."""
+    hospital_id: int
+    hospital_name: str
+    reason: str
+
+
+class AssignmentResponse(BaseModel):
+    """
+    Full result of POST /emergency/{id}/assign.
+
+    candidates is a ranked list (rank 1 = chosen hospital, rank 2 = next-best, etc.)
+    filtered_out shows which hospitals were excluded and why.
+    This breakdown lets a dispatcher see at a glance *why* a specific hospital
+    was chosen and what alternatives were available.
+    """
+    emergency_id: int
+    assigned_hospital_id: int | None
+    status: str                               # "ASSIGNED" or "NO_CANDIDATES"
+    reason: str | None = None                 # set when no candidates passed filtering
+    condition: str                            # patient condition that drove the weights
+    candidates: list[ScoredHospitalResponse]  # ranked best → worst
+    filtered_out: list[FilteredHospitalResponse]

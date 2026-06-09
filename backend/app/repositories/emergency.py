@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.schemas import EmergencyCaseCreate
@@ -27,3 +27,13 @@ class EmergencyCaseRepository:
             select(EmergencyCase).order_by(EmergencyCase.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def assign(self, case_id: int, hospital_id: int) -> EmergencyCase | None:
+        """Set assigned_hospital_id and transition status to ASSIGNED."""
+        await self._s.execute(
+            update(EmergencyCase)
+            .where(EmergencyCase.id == case_id)
+            .values(assigned_hospital_id=hospital_id, status="ASSIGNED")
+        )
+        await self._s.commit()
+        return await self.get_by_id(case_id)
