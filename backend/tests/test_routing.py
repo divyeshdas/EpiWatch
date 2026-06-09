@@ -9,11 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.graph.astar import astar, make_heuristic
 from app.graph.dijkstra import PathResult, dijkstra
 from app.graph.heap import MinHeap
 from app.graph.kdtree import KDTree
 from app.graph.road_graph import RoadGraph
-from tests.graph_fixtures import _DIST_M, _LAT0, _LON0, _TIME_S, make_grid, node_id
+from tests.graph_fixtures import _DIST_M, _LAT0, _LON0, _STEP, _TIME_S, make_grid, node_id
 
 
 # ── shared helper ─────────────────────────────────────────────────────────────
@@ -328,3 +329,170 @@ class TestRouteEndpoint:
         event = mock_bus.publish.call_args[0][0]
         assert event.payload["hospital_id"] == 1
         assert event.payload["total_travel_time_s"] > 0
+
+    def test_algo_astar_query_param(self, client, mock_hospital_repo):
+        """?algo=astar returns a valid route (same cost as Dijkstra default)."""
+        g, tree = self._make_graph_and_tree(5)
+        hospital = MagicMock()
+        hospital.nearest_node_id = node_id(4, 4, 5)
+        mock_hospital_repo.get_by_id.return_value = hospital
+
+        with patch("app.graph.loader.road_graph", g), \
+             patch("app.graph.loader.kd_tree", tree):
+            resp = client.post("/route?algo=astar", json={
+                "latitude": _LAT0,
+                "longitude": _LON0,
+                "hospital_id": 1,
+            })
+
+        assert resp.status_code == 200
+        assert resp.json()["route"]["node_count"] == 9
+
+    def test_algo_dijkstra_query_param(self, client, mock_hospital_repo):
+        """?algo=dijkstra returns a valid route identical in cost to A*."""
+        g, tree = self._make_graph_and_tree(5)
+        hospital = MagicMock()
+        hospital.nearest_node_id = node_id(4, 4, 5)
+        mock_hospital_repo.get_by_id.return_value = hospital
+
+        with patch("app.graph.loader.road_graph", g), \
+             patch("app.graph.loader.kd_tree", tree):
+            resp = client.post("/route?algo=dijkstra", json={
+                "latitude": _LAT0,
+                "longitude": _LON0,
+                "hospital_id": 1,
+            })
+
+        assert resp.status_code == 200
+        r = resp.json()["route"]
+        assert r["node_count"] == 9
+        assert r["total_travel_time_s"] == pytest.approx(8 * _TIME_S, rel=1e-3)
+
+
+# ── A* algorithm ──────────────────────────────────────────────────────────────
+
+class TestAstar:
+    """
+    All tests use the synthetic grid fixture.  Because the grid has uniform edge
+    weights, A* and Dijkstra must return exactly the same optimal cost.
+    """
+
+    def test_source_equals_target(self):
+        g = _make_road_graph(5)
+        nid = node_id(2, 2, 5)
+        h = make_heuristic(g, nid)
+        result = astar(g, nid, nid, h)
+        assert result is not None
+        assert result.node_ids == [nid]
+        assert result.total_distance_m == 0.0
+        assert result.total_travel_time_s == 0.0
+
+    def test_single_hop_same_cost_as_dijkstra(self):
+        g = _make_road_graph(5)
+        src = node_id(0, 0, 5)
+        tgt = node_id(0, 1, 5)
+        h = make_heuristic(g, tgt)
+        a = astar(g, src, tgt, h)
+        d = dijkstra(g, src, tgt)
+        assert a is not None and d is not None
+        assert a.total_travel_time_s == pytest.approx(d.total_travel_time_s)
+        assert a.total_distance_m == pytest.approx(d.total_distance_m)
+
+    def test_corner_to_corner_same_cost_as_dijkstra(self):
+        g = _make_road_graph(5)
+        src = node_id(0, 0, 5)
+        tgt = node_id(4, 4, 5)
+        h = make_heuristic(g, tgt)
+        a = astar(g, src, tgt, h)
+        d = dijkstra(g, src, tgt)
+        assert a is not None and d is not None
+        assert a.total_travel_time_s == pytest.approx(d.total_travel_time_s)
+        assert a.total_distance_m == pytest.approx(d.total_distance_m)
+        assert len(a.node_ids) == 9
+
+    def test_mid_grid_route_same_cost_as_dijkstra(self):
+        g = _make_road_graph(7)
+        src = node_id(1, 1, 7)
+        tgt = node_id(5, 5, 7)
+        h = make_heuristic(g, tgt)
+        a = astar(g, src, tgt, h)
+        d = dijkstra(g, src, tgt)
+        assert a is not None and d is not None
+        assert a.total_travel_time_s == pytest.approx(d.total_travel_time_s)
+
+    def test_astar_expands_fewer_nodes_than_dijkstra(self):
+        """
+        A* with a non-trivial heuristic should expand strictly fewer nodes than
+        Dijkstra on a directional route.
+
+        We use (0,0) → (9,0): a pure-vertical path along column j=0.
+        Dijkstra expands every node whose Manhattan distance from the source is
+        ≤ the optimal cost (18 nodes/row-major cost ≤ 9 steps = 45 nodes before
+        the i+j=9 frontier, then several i+j=9 nodes before (9,0) is popped).
+        A* with the Haversine heuristic never expands any off-axis node (i,j>0):
+        those have f = g + h > optimal_cost because the Euclidean shortcut through
+        off-axis nodes always adds distance compared to going straight.
+
+        Corner-to-corner routing is deliberately avoided: on a uniform-weight grid
+        the target lies at the maximum possible cost, so Dijkstra always expands
+        the entire grid and A*'s savings disappear.
+        """
+        g = _make_road_graph(10)
+        src = node_id(0, 0, 10)
+        tgt = node_id(9, 0, 10)    # straight vertical path — 9 steps along column 0
+        h = make_heuristic(g, tgt)
+        a = astar(g, src, tgt, h)
+        d = dijkstra(g, src, tgt)
+        assert a is not None and d is not None
+        # A* expands ≈10 nodes (the optimal path); Dijkstra expands 45+.
+        assert a.nodes_expanded < d.nodes_expanded
+
+    def test_path_is_valid_edge_sequence(self):
+        nodes, edges = make_grid(5)
+        edge_set = {(s, t) for s, t, _, _ in edges}
+        g = _make_road_graph(5)
+        h = make_heuristic(g, node_id(4, 4, 5))
+        result = astar(g, node_id(0, 0, 5), node_id(4, 4, 5), h)
+        assert result is not None
+        for a, b in zip(result.node_ids, result.node_ids[1:]):
+            assert (a, b) in edge_set
+
+    def test_unreachable_returns_none(self):
+        g = RoadGraph()
+        g.add_node(1, 19.0, 72.85)
+        g.add_node(2, 19.1, 72.85)
+        h = make_heuristic(g, 2)
+        assert astar(g, 1, 2, h) is None
+
+    def test_zero_heuristic_gives_dijkstra_cost(self):
+        """h ≡ 0 degenerates A* to Dijkstra — costs must match exactly."""
+        g = _make_road_graph(5)
+        src = node_id(0, 0, 5)
+        tgt = node_id(3, 4, 5)
+        a = astar(g, src, tgt, heuristic=lambda _: 0.0)
+        d = dijkstra(g, src, tgt)
+        assert a is not None and d is not None
+        assert a.total_travel_time_s == pytest.approx(d.total_travel_time_s)
+
+    def test_heuristic_is_admissible_for_all_grid_nodes(self):
+        """
+        Admissibility: h(n) ≤ true shortest-path cost from n to goal for every n.
+
+        We verify this exhaustively over a 5×5 grid.  For each node we compute
+        the heuristic value and the actual Dijkstra cost, and assert h ≤ actual.
+        A tiny epsilon accounts for floating-point rounding.
+        """
+        g = _make_road_graph(5)
+        goal = node_id(4, 4, 5)
+        h_fn = make_heuristic(g, goal)
+
+        for i in range(5):
+            for j in range(5):
+                nid = node_id(i, j, 5)
+                h_val = h_fn(nid)
+                actual = dijkstra(g, nid, goal)
+                actual_cost = 0.0 if actual is None else actual.total_travel_time_s
+                assert h_val <= actual_cost + 1e-6, (
+                    f"Heuristic overestimates at ({i},{j}): "
+                    f"h={h_val:.4f} > actual={actual_cost:.4f}"
+                )

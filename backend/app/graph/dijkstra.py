@@ -61,10 +61,11 @@ from app.graph.road_graph import Edge, RoadGraph
 
 @dataclass
 class PathResult:
-    """Outcome of a successful Dijkstra search."""
+    """Outcome of a successful path search (Dijkstra or A*)."""
     node_ids: list[int]          # ordered path: source → … → target
     total_distance_m: float      # sum of edge.distance_m along the path
     total_travel_time_s: float   # sum of edge.travel_time_s along the path
+    nodes_expanded: int = 0      # non-stale pops from the frontier (search-effort metric)
 
 
 def dijkstra(
@@ -98,6 +99,7 @@ def dijkstra(
 
     heap = MinHeap()
     heap.push(0.0, source)
+    nodes_expanded = 0
 
     while heap:
         cost, node = heap.pop_min()
@@ -108,8 +110,10 @@ def dijkstra(
         if cost > dist.get(node, float("inf")):
             continue
 
+        nodes_expanded += 1
+
         if node == target:
-            return _reconstruct(source, target, prev)
+            return _reconstruct(source, target, prev, nodes_expanded)
 
         for edge in graph.neighbors(node):
             new_cost = cost + weight(edge)
@@ -127,6 +131,7 @@ def _reconstruct(
     source: int,
     target: int,
     prev: dict[int, tuple[int, float, float]],
+    nodes_expanded: int = 0,
 ) -> PathResult:
     """Walk the predecessor map from target back to source and reverse."""
     path: list[int] = []
@@ -147,4 +152,5 @@ def _reconstruct(
         node_ids=path,
         total_distance_m=round(total_dist_m, 1),
         total_travel_time_s=round(total_tt_s, 1),
+        nodes_expanded=nodes_expanded,
     )

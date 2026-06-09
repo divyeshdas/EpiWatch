@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_bus, get_hospital_repo
 from app.domain.events import Event, EventType
@@ -13,6 +15,10 @@ router = APIRouter(prefix="/route", tags=["routing"])
 @router.post("", response_model=RouteResponse)
 async def compute_route(
     body: RouteRequest,
+    algo: Literal["astar", "dijkstra"] = Query(
+        default="astar",
+        description="Path-finding algorithm: 'astar' (default) or 'dijkstra'.",
+    ),
     hospital_repo: HospitalRepository = Depends(get_hospital_repo),
     bus: EventBus = Depends(get_bus),
 ) -> RouteResponse:
@@ -37,8 +43,14 @@ async def compute_route(
 
     tgt_node_id: int = hospital.nearest_node_id
 
-    # Dijkstra shortest path, optimising for travel time (= ambulance ETA).
-    result = dijkstra(road_graph, src_node_id, tgt_node_id)
+    # Choose algorithm.  A* is the default: same optimal cost as Dijkstra but
+    # expands fewer nodes because the Haversine heuristic guides the frontier
+    # toward the goal.
+    if algo == "astar":
+        from app.graph.astar import astar, make_heuristic
+        result = astar(road_graph, src_node_id, tgt_node_id, make_heuristic(road_graph, tgt_node_id))
+    else:
+        result = dijkstra(road_graph, src_node_id, tgt_node_id)
 
     if result is None:
         return RouteResponse(
@@ -55,6 +67,7 @@ async def compute_route(
     await bus.publish(Event(
         type=EventType.ROUTE_COMPUTED,
         payload={
+            "algo": algo,
             "from_node_id": src_node_id,
             "to_node_id": tgt_node_id,
             "hospital_id": body.hospital_id,
