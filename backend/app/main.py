@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.events.redis_backend import RedisEventBus
-from app.api.routes import ws, demo
+from app.api.routes import ws, demo, hospitals, emergency
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -37,3 +37,5 @@ app.add_middleware(
 
 app.include_router(ws.router)
 app.include_router(demo.router, prefix="/demo", tags=["demo"])
+app.include_router(hospitals.router)
+app.include_router(emergency.router)
