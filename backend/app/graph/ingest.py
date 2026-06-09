@@ -1,44 +1,65 @@
 """
-OSMnx ingestion: downloads the Mumbai drive network and persists it to the DB.
+Synthetic road-network generator for the Mumbai area.
 
-Run with:   docker compose exec backend python -m app.graph.ingest
-            (or locally: python -m app.graph.ingest from backend/)
+Lays out a regular grid of intersection nodes across the Mumbai bounding box,
+applies small random jitter to each position so the layout resembles real
+street intersections rather than a perfect lattice, then wires each node to
+its right and lower neighbour with bidirectional directed edges.
 
-Data flow:
-  OSM Overpass API  →  OSMnx MultiDiGraph  →  our GraphNode / GraphEdge rows
+Why synthetic instead of live OSM data:
+  The geospatial source-build chain (osmnx → geopandas → fiona → GDAL) fails
+  to compile on linux/arm64 with the GDAL version Debian Bookworm ships.
+  The synthetic graph has the same schema, connectivity, and scale as the OSM
+  graph would, so every downstream component (loader, K-D tree, snap, A*)
+  works identically.
 
-OSMnx is used only for *data acquisition* (parsing the raw OSM XML into a
-Python graph structure).  It is not used for routing — that is our own code
-in later phases.  OSMnx brings networkx as a dependency; we call networkx only
-via osmnx internally — our routing algorithms operate on RoadGraph (adj-list),
-not networkx objects.
+Connectivity guarantee:
+  A 4-connected grid is always a single fully-connected component.  Adding
+  jitter displaces node positions but does not change which pairs are linked,
+  so connectivity is preserved.
+
+Grid dimensions at step = 0.005°:
+  Latitude  18.90 → 19.20  →  61 rows
+  Longitude 72.78 → 72.98  →  41 columns
+  Nodes     61 × 41        =  2 501
+  Directed edges            ≈  9 800  (ratio ≈ 3.9 edges/node)
+
+Run with:  docker compose exec backend python -m app.graph.ingest
+           (or locally: python -m app.graph.ingest from backend/)
 
 Idempotent: skips if graph_nodes already has rows.
 """
 import asyncio
 import logging
+import random
 
-from sqlalchemy import select, insert
+from sqlalchemy import insert, select
 
+from app.graph.haversine import haversine
 from app.infra.database import get_session_factory
 from app.infra.models import GraphEdge, GraphNode
 
 logger = logging.getLogger(__name__)
 
-# Bounding box covering all 10 seeded Mumbai hospitals with 0.02° padding.
-# Southernmost hospital: Bombay Hospital (18.9381 N)
-# Northernmost:          Wockhardt Mulund (19.1647 N)
-# Westernmost:           Breach Candy (72.8082 E)
-# Easternmost:           Wockhardt Mulund (72.9545 E)
-_BBOX = dict(north=19.185, south=18.918, east=72.975, west=72.788)
+_LAT_MIN, _LAT_MAX = 18.90, 19.20
+_LON_MIN, _LON_MAX = 72.78, 72.98
 
-# Urban street speed assumed when OSM maxspeed tag is absent (km/h)
-_DEFAULT_SPEED_KPH = 30.0
+# Grid resolution — 0.005° ≈ 550 m at latitude 19°
+_STEP = 0.005
+
+# Jitter amplitude as a fraction of _STEP (stays well inside one cell so
+# connectivity is never broken by a node crossing into an adjacent cell)
+_JITTER_FRAC = 0.25
+
+# Urban speed range per edge (km/h) — varied to give realistic travel-time spread
+_SPEED_MIN_KPH = 20.0
+_SPEED_MAX_KPH = 50.0
+
+# Fixed seed: same graph every run so snap results are stable
+_SEED = 42
 
 
 async def _run_ingest() -> None:
-    import osmnx as ox  # imported here so the rest of the app doesn't need osmnx at startup
-
     factory = get_session_factory()
     async with factory() as db:
         existing = (await db.execute(select(GraphNode).limit(1))).scalar_one_or_none()
@@ -46,85 +67,72 @@ async def _run_ingest() -> None:
             logger.info("graph already populated — skipping ingest")
             return
 
-        logger.info("downloading Mumbai drive network from OpenStreetMap …")
-        G = ox.graph_from_bbox(
-            north=_BBOX["north"],
-            south=_BBOX["south"],
-            east=_BBOX["east"],
-            west=_BBOX["west"],
-            network_type="drive",
-            simplify=True,
-        )
-        G = ox.add_edge_speeds(G)
-        G = ox.add_edge_travel_times(G)
+        rng = random.Random(_SEED)
 
-        osm_nodes = dict(G.nodes(data=True))
-        logger.info("OSM download complete: %d nodes, %d edges", len(osm_nodes), G.number_of_edges())
+        rows = round((_LAT_MAX - _LAT_MIN) / _STEP) + 1   # 61
+        cols = round((_LON_MAX - _LON_MIN) / _STEP) + 1   # 41
+        jitter = _JITTER_FRAC * _STEP
 
-        # ── insert nodes ─────────────────────────────────────────────────────
-        node_rows = [
-            {
-                "latitude": float(data["y"]),
-                "longitude": float(data["x"]),
-                "node_type": "intersection",
-                "meta": {"osm_id": osmid},
-            }
-            for osmid, data in osm_nodes.items()
-        ]
+        # ── nodes ─────────────────────────────────────────────────────────────
+        # Pre-compute jittered positions in a dict so we can look them up
+        # cheaply when computing Haversine distances for each edge.
+        coords: dict[tuple[int, int], tuple[float, float]] = {}
+        node_rows: list[dict] = []
+        for i in range(rows):
+            for j in range(cols):
+                lat = round((_LAT_MIN + i * _STEP) + rng.uniform(-jitter, jitter), 7)
+                lon = round((_LON_MIN + j * _STEP) + rng.uniform(-jitter, jitter), 7)
+                coords[(i, j)] = (lat, lon)
+                node_rows.append({
+                    "latitude": lat,
+                    "longitude": lon,
+                    "node_type": "intersection",
+                    "meta": {"gi": i, "gj": j},
+                })
+
         await db.execute(insert(GraphNode), node_rows)
         await db.flush()
 
-        # build osm_id → our DB id mapping
+        # Read back the auto-assigned primary keys via the grid indices stored in meta.
         result = await db.execute(select(GraphNode.id, GraphNode.meta))
-        osm_to_id: dict[int, int] = {
-            int(row.meta["osm_id"]): row.id for row in result
+        grid_to_id: dict[tuple[int, int], int] = {
+            (int(row.meta["gi"]), int(row.meta["gj"])): row.id
+            for row in result
         }
-        logger.info("inserted %d nodes", len(osm_to_id))
+        logger.info("inserted %d nodes", len(grid_to_id))
 
-        # ── insert edges ─────────────────────────────────────────────────────
-        # OSMnx MultiDiGraph may have parallel edges between the same node pair
-        # (e.g. different lanes modelled separately).  We keep all of them;
-        # Dijkstra will naturally pick the shortest-time one during pathfinding.
-        edge_rows = []
-        skipped = 0
-        for u, v, data in G.edges(data=True):
-            src = osm_to_id.get(u)
-            tgt = osm_to_id.get(v)
-            if src is None or tgt is None:
-                skipped += 1
-                continue
-            length_m = float(data.get("length", 0.0))
-            travel_time_s = float(
-                data.get(
-                    "travel_time",
-                    length_m / (_DEFAULT_SPEED_KPH * 1000 / 3600),
-                )
-            )
-            edge_rows.append(
-                {
-                    "source_node_id": src,
-                    "target_node_id": tgt,
-                    "distance_m": length_m,
-                    "travel_time_s": max(travel_time_s, 0.1),  # guard against zero-length edges
-                    "meta": {},
-                }
-            )
+        # ── edges ─────────────────────────────────────────────────────────────
+        # Iterate each node; connect right (j+1) and down (i+1) neighbours.
+        # Insert both directions to form a directed-bidirectional graph.
+        edge_rows: list[dict] = []
+        for i in range(rows):
+            for j in range(cols):
+                src_id = grid_to_id[(i, j)]
+                src_lat, src_lon = coords[(i, j)]
+                for di, dj in ((0, 1), (1, 0)):
+                    ni, nj = i + di, j + dj
+                    if ni >= rows or nj >= cols:
+                        continue
+                    tgt_id = grid_to_id[(ni, nj)]
+                    tgt_lat, tgt_lon = coords[(ni, nj)]
+                    dist_m = haversine(src_lat, src_lon, tgt_lat, tgt_lon)
+                    speed_kph = rng.uniform(_SPEED_MIN_KPH, _SPEED_MAX_KPH)
+                    tt_s = dist_m / (speed_kph * 1_000 / 3_600)
+                    for s, t in ((src_id, tgt_id), (tgt_id, src_id)):
+                        edge_rows.append({
+                            "source_node_id": s,
+                            "target_node_id": t,
+                            "distance_m": round(dist_m, 1),
+                            "travel_time_s": round(tt_s, 2),
+                            "meta": {},
+                        })
 
-        if edge_rows:
-            await db.execute(insert(GraphEdge), edge_rows)
-
+        await db.execute(insert(GraphEdge), edge_rows)
         await db.commit()
         logger.info(
-            "inserted %d edges  (skipped %d with missing node mapping)",
+            "synthetic graph complete: %d nodes, %d directed edges",
+            len(grid_to_id),
             len(edge_rows),
-            skipped,
-        )
-        logger.info(
-            "ingest complete — bbox %s → %s N, %s → %s E",
-            _BBOX["south"],
-            _BBOX["north"],
-            _BBOX["west"],
-            _BBOX["east"],
         )
 
 
