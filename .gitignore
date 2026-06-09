@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+dist/
+build/
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyo
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+build/
+.vercel/
+.output/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
