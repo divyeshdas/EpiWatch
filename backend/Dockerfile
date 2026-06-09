@@ -12,6 +12,7 @@ WORKDIR /app
 # libgeos-dev / libproj-dev / libspatialindex-dev are fallbacks for source builds
 # on less common patch releases.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
