@@ -20,3 +20,8 @@ def get_hospital_repo(db: AsyncSession = Depends(get_db)) -> HospitalRepository:
 
 def get_emergency_repo(db: AsyncSession = Depends(get_db)) -> EmergencyCaseRepository:
     return EmergencyCaseRepository(db)
+
+
+def get_surveillance_repo(db: AsyncSession = Depends(get_db)):
+    from app.repositories.surveillance import SurveillanceRepository
+    return SurveillanceRepository(db)

@@ -149,6 +149,46 @@ class FilteredHospitalResponse(BaseModel):
     reason: str
 
 
+# ── Surveillance / disease reports ───────────────────────────────────────────
+
+class DiseaseReportCreate(BaseModel):
+    disease_name: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+    latitude: Annotated[float, Field(ge=-90, le=90)] | None = None
+    longitude: Annotated[float, Field(ge=-180, le=180)] | None = None
+    case_count: Annotated[int, Field(ge=1)]
+    reported_at: datetime | None = None
+
+
+class DiseaseReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    disease_name: str
+    region: str
+    latitude: float | None
+    longitude: float | None
+    case_count: int
+    reported_at: datetime
+
+
+class RegionSummary(BaseModel):
+    """Aggregated totals per region — used by B2 clustering."""
+    region: str
+    latitude: float | None
+    longitude: float | None
+    total_cases: int
+    report_count: int
+    diseases: list[str]
+
+
+class TimeSeriesPoint(BaseModel):
+    """Daily case count — used by B3 spike detection."""
+    date: str          # ISO 8601 date string (YYYY-MM-DD)
+    total_cases: int
+    report_count: int
+
+
 class AssignmentResponse(BaseModel):
     """
     Full result of POST /emergency/{id}/assign.

@@ -12,6 +12,7 @@ class EventType(str, Enum):
     OUTBREAK_DETECTED = "OutbreakDetected"
     HOTSPOT_RECOMPUTED = "HotspotRecomputed"
     ALERT_GENERATED = "AlertGenerated"
+    DISEASE_REPORTED = "DiseaseReported"
     DEMO_PING = "DemoPing"
 
 
