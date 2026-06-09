@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -69,9 +69,19 @@
   async function loadDiseases() {
     const r = await fetch(`${API}/diseases`);
     diseases = await r.json();
+    // Prefer covid_19 on first load; fall back to first disease returned.
+    if (!diseases.find(x => x.disease_name === selectedDisease)) {
+      selectedDisease = diseases[0]?.disease_name ?? selectedDisease;
+    }
     const d = diseases.find(x => x.disease_name === selectedDisease);
-    if (d) regions = d.regions;
-    if (!regions.includes(selectedRegion)) selectedRegion = regions[0] ?? '';
+    if (d) {
+      regions = d.regions;
+      // Always set selectedRegion from the authoritative regions list.
+      // Prefer 'India' if it exists, otherwise take the first region.
+      // This must run unconditionally — never leave selectedRegion as an
+      // initial guess that the DOM's empty <select> may have already reset.
+      selectedRegion = regions.includes('India') ? 'India' : (regions[0] ?? '');
+    }
   }
 
   async function loadSummary() {
@@ -256,7 +266,8 @@
     stopPlay();
     const d = diseases.find(x => x.disease_name === selectedDisease);
     regions = d?.regions ?? [];
-    selectedRegion = regions[0] ?? '';
+    // Same preference as initial load: keep India when available.
+    selectedRegion = regions.includes('India') ? 'India' : (regions[0] ?? '');
     loadTimeSeries();
   }
 
@@ -280,6 +291,10 @@
     window.addEventListener('resize', resize);
 
     await Promise.all([loadDiseases(), loadSummary()]);
+    // tick() flushes Svelte's pending DOM updates — specifically the <select>
+    // options re-render — before loadTimeSeries() reads selectedRegion.
+    // Without this, the options may not exist in the DOM yet when we query.
+    await tick();
     await loadTimeSeries();
 
     return () => window.removeEventListener('resize', resize);
@@ -342,9 +357,19 @@
         </div>
 
         <label class="field-label mt">Region</label>
-        <select bind:value={selectedRegion} on:change={onRegionChange} class="select">
+        <!--
+          Do NOT use bind:value here. Svelte's two-way select binding reads the
+          DOM value back into the variable; when the <select> initially renders
+          with zero <option> children (regions=[]), the DOM value is "" and
+          Svelte overwrites selectedRegion with "". Use one-way value + explicit
+          selected attribute per option instead.
+        -->
+        <select
+          on:change={(e) => { selectedRegion = (e.currentTarget as HTMLSelectElement).value; onRegionChange(); }}
+          class="select"
+        >
           {#each regions as r}
-            <option value={r}>{r}</option>
+            <option value={r} selected={r === selectedRegion}>{r}</option>
           {/each}
         </select>
 
@@ -408,7 +433,7 @@
       <div bind:this={chartEl} class="echarts-container"></div>
 
       {#if seriesData.length === 0}
-        <div class="no-data">no data for {selectedDisease} / {selectedRegion}</div>
+        <div class="no-data">no data for {diseaseLabel(selectedDisease)} / {selectedRegion || '(no region selected)'}</div>
       {/if}
     </main>
   </div>
