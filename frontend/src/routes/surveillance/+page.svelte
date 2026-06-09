@@ -271,6 +271,13 @@
     loadTimeSeries();
   }
 
+  // Named handler so the TypeScript cast stays in the <script> block —
+  // Svelte's template parser does not process TS syntax in inline expressions.
+  function handleRegionChange(e: Event) {
+    selectedRegion = (e.currentTarget as HTMLSelectElement).value;
+    onRegionChange();
+  }
+
   function onRegionChange() {
     stopPlay();
     loadTimeSeries();
@@ -278,24 +285,26 @@
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  onMount(async () => {
+  // onMount must be synchronous to return a cleanup function that TypeScript
+  // and Svelte both accept.  Async work runs in an IIFE so the cleanup can
+  // be returned immediately without wrapping in a Promise.
+  onMount(() => {
     if (!browser) return;
 
-    // Deferred import — keeps ECharts out of SSR entirely
-    echarts = await import('echarts');
-
-    chart = echarts.init(chartEl, null, { renderer: 'canvas' });
-
-    // Resize with window
     const resize = () => chart?.resize();
     window.addEventListener('resize', resize);
 
-    await Promise.all([loadDiseases(), loadSummary()]);
-    // tick() flushes Svelte's pending DOM updates — specifically the <select>
-    // options re-render — before loadTimeSeries() reads selectedRegion.
-    // Without this, the options may not exist in the DOM yet when we query.
-    await tick();
-    await loadTimeSeries();
+    // Deferred import — keeps ECharts out of SSR entirely (ssr=false in
+    // +page.ts also prevents SSR, but the guard is belt-and-suspenders).
+    (async () => {
+      echarts = await import('echarts');
+      chart = echarts.init(chartEl, null, { renderer: 'canvas' });
+      await Promise.all([loadDiseases(), loadSummary()]);
+      // tick() flushes Svelte's pending DOM updates — specifically the <select>
+      // options re-render — before loadTimeSeries() reads selectedRegion.
+      await tick();
+      await loadTimeSeries();
+    })();
 
     return () => window.removeEventListener('resize', resize);
   });
@@ -357,17 +366,7 @@
         </div>
 
         <label class="field-label mt">Region</label>
-        <!--
-          Do NOT use bind:value here. Svelte's two-way select binding reads the
-          DOM value back into the variable; when the <select> initially renders
-          with zero <option> children (regions=[]), the DOM value is "" and
-          Svelte overwrites selectedRegion with "". Use one-way value + explicit
-          selected attribute per option instead.
-        -->
-        <select
-          on:change={(e) => { selectedRegion = (e.currentTarget as HTMLSelectElement).value; onRegionChange(); }}
-          class="select"
-        >
+        <select on:change={handleRegionChange} class="select">
           {#each regions as r}
             <option value={r} selected={r === selectedRegion}>{r}</option>
           {/each}
