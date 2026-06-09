@@ -90,3 +90,29 @@ class GraphStatsResponse(BaseModel):
     node_count: int
     edge_count: int
     bounding_box: dict[str, float]
+
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+
+class RouteRequest(BaseModel):
+    latitude: Annotated[float, Field(ge=-90, le=90)]
+    longitude: Annotated[float, Field(ge=-180, le=180)]
+    hospital_id: int
+
+
+class RouteNode(BaseModel):
+    node_id: int
+    latitude: float
+    longitude: float
+
+
+class RouteDetail(BaseModel):
+    path: list[RouteNode]
+    total_distance_m: float
+    total_travel_time_s: float
+    node_count: int
+
+
+class RouteResponse(BaseModel):
+    route: RouteDetail | None
+    reason: str | None = None

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.events.redis_backend import RedisEventBus
-from app.api.routes import ws, demo, hospitals, emergency, graph
+from app.api.routes import ws, demo, hospitals, emergency, graph, route
 from app.graph.loader import load_graph
 from app.infra.database import get_session_factory
 
@@ -49,3 +49,4 @@ app.include_router(demo.router, prefix="/demo", tags=["demo"])
 app.include_router(hospitals.router)
 app.include_router(emergency.router)
 app.include_router(graph.router)
+app.include_router(route.router)
