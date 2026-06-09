@@ -25,11 +25,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_bus, get_outbreak_repo, get_surveillance_repo
+from app.config import settings
 from app.domain.events import Event, EventType
 from app.domain.schemas import (
     DiseaseInfo,
     DiseaseReportCreate,
     DiseaseReportResponse,
+    HotspotCluster,
+    HotspotResponse,
     OutbreakPoint,
     OutbreakSummary,
     RegionSummary,
@@ -37,6 +40,7 @@ from app.domain.schemas import (
 )
 from app.events.bus import EventBus
 from app.repositories.surveillance import SurveillanceRepository
+from app.surveillance.clustering import ClusterPoint, dbscan
 from app.surveillance.repository import OutbreakRepository
 
 router = APIRouter(prefix="/surveillance", tags=["surveillance"])
@@ -136,6 +140,99 @@ async def time_series(
     """
     points = await repo.time_series(region=region, disease=disease, days=days)
     return [TimeSeriesPoint(**p) for p in points]
+
+
+# ── Clustering endpoint (B2) ──────────────────────────────────────────────────
+
+@router.get("/hotspots", response_model=HotspotResponse)
+async def get_hotspots(
+    disease: str | None = Query(
+        default=None,
+        description="Restrict to one disease slug (e.g. dengue).  Omit for all diseases.",
+    ),
+    eps_km: float = Query(
+        default=settings.hotspot_eps_km,
+        gt=0,
+        le=50,
+        description="Neighbourhood radius in km.  Two reports within this distance are co-located.",
+    ),
+    min_pts: int = Query(
+        default=settings.hotspot_min_pts,
+        ge=1,
+        le=500,
+        description="Min reports in the ε-neighbourhood for a core point.  Fewer → noise.",
+    ),
+    from_date: datetime | None = Query(default=None, description="Earliest reported_at (inclusive)"),
+    to_date: datetime | None = Query(default=None, description="Latest reported_at (inclusive)"),
+    repo: SurveillanceRepository = Depends(get_surveillance_repo),
+) -> HotspotResponse:
+    """
+    Run DBSCAN on geolocated disease reports and return outbreak hotspot clusters.
+
+    Each cluster in the response represents a geographic concentration of field
+    reports.  The centroid, total case count, member report ids, and bounding
+    radius are derived from the raw report coordinates — not from pre-aggregated
+    region boundaries.  Noise points (isolated reports below the density
+    threshold) are returned separately so the frontend can render them
+    distinctly from confirmed hotspots.
+
+    Algorithm: DBSCAN with a K-D tree spatial index.
+    Complexity: O(n log n) average over n matching reports.
+    """
+    reports = await repo.reports_for_clustering(
+        disease=disease,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    points = [
+        ClusterPoint(
+            idx=i,
+            report_id=r.id,
+            lat=float(r.latitude),
+            lon=float(r.longitude),
+            case_count=r.case_count,
+        )
+        for i, r in enumerate(reports)
+    ]
+
+    results = dbscan(points, eps_km=eps_km, min_pts=min_pts)
+
+    clusters = [
+        HotspotCluster(
+            cluster_id=c.cluster_id,
+            centroid_lat=c.centroid_lat,
+            centroid_lon=c.centroid_lon,
+            total_cases=c.total_cases,
+            report_count=c.report_count,
+            radius_km=c.radius_km,
+            member_ids=c.member_ids,
+        )
+        for c in results
+        if c.cluster_id >= 0
+    ]
+    noise_points = [
+        HotspotCluster(
+            cluster_id=c.cluster_id,
+            centroid_lat=c.centroid_lat,
+            centroid_lon=c.centroid_lon,
+            total_cases=c.total_cases,
+            report_count=c.report_count,
+            radius_km=c.radius_km,
+            member_ids=c.member_ids,
+        )
+        for c in results
+        if c.cluster_id == -1
+    ]
+
+    return HotspotResponse(
+        clusters=clusters,
+        noise_points=noise_points,
+        eps_km=eps_km,
+        min_pts=min_pts,
+        report_count=len(reports),
+        cluster_count=len(clusters),
+    )
 
 
 # ── Analytical endpoints (outbreak_timeseries / OWID historical data) ─────────

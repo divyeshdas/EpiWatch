@@ -82,6 +82,35 @@ class SurveillanceRepository:
         result = await self._s.execute(stmt)
         return list(result.scalars().all())
 
+    async def reports_for_clustering(
+        self,
+        disease: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> list[DiseaseReport]:
+        """
+        Fetch individual reports with coordinates for DBSCAN input.
+
+        Only returns rows where both latitude and longitude are set — rows
+        without coordinates cannot be placed on the map and are excluded.
+        No limit applied: the clustering algorithm needs the full set.
+
+        Time: O(R) where R = matching rows; index scan on reported_at if
+        a date filter is supplied.
+        """
+        stmt = select(DiseaseReport).where(
+            DiseaseReport.latitude.is_not(None),
+            DiseaseReport.longitude.is_not(None),
+        )
+        if disease:
+            stmt = stmt.where(DiseaseReport.disease_name == disease)
+        if from_date:
+            stmt = stmt.where(DiseaseReport.reported_at >= from_date)
+        if to_date:
+            stmt = stmt.where(DiseaseReport.reported_at <= to_date)
+        result = await self._s.execute(stmt)
+        return list(result.scalars().all())
+
     async def aggregate_by_region(
         self,
         disease: str | None = None,

@@ -28,6 +28,25 @@
     record_count: number;
   };
 
+  type HotspotCluster = {
+    cluster_id: number;
+    centroid_lat: number;
+    centroid_lon: number;
+    total_cases: number;
+    report_count: number;
+    radius_km: number;
+    member_ids: number[];
+  };
+
+  type HotspotResponse = {
+    clusters: HotspotCluster[];
+    noise_points: HotspotCluster[];
+    eps_km: number;
+    min_pts: number;
+    report_count: number;
+    cluster_count: number;
+  };
+
   // ── State ──────────────────────────────────────────────────────────────────
 
   const API = 'http://localhost:8000/surveillance';
@@ -59,10 +78,23 @@
   let isPlaying = false;
   let playTimer: ReturnType<typeof setInterval> | null = null;
 
+  // View toggle — 'timeseries' | 'hotspots'
+  let view: 'timeseries' | 'hotspots' = 'timeseries';
+
+  // Hotspot clustering state
+  let epsKm: number = 2.0;
+  let minPts: number = 3;
+  let hotspotData: HotspotResponse = {
+    clusters: [], noise_points: [], eps_km: 2.0, min_pts: 3,
+    report_count: 0, cluster_count: 0,
+  };
+
   // ECharts — browser-only; never touches SSR
   let chartEl: HTMLDivElement;
   let chart: any = null;
   let echarts: any = null;
+  let hotspotChartEl: HTMLDivElement;
+  let hotspotChart: any = null;
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
@@ -283,6 +315,106 @@
     loadTimeSeries();
   }
 
+  // ── Hotspot map ───────────────────────────────────────────────────────────
+
+  async function loadHotspots() {
+    const disease = selectedDisease ? `&disease=${encodeURIComponent(selectedDisease)}` : '';
+    const url = `${API}/hotspots?eps_km=${epsKm}&min_pts=${minPts}${disease}`;
+    const r = await fetch(url);
+    hotspotData = await r.json();
+    renderHotspotChart();
+  }
+
+  function renderHotspotChart() {
+    if (!hotspotChart || !echarts) return;
+    const { clusters, noise_points } = hotspotData;
+    const color = DISEASE_COLORS[selectedDisease] ?? '#f59e0b';
+
+    // Scale circle size by sqrt(total_cases) so large clusters are visible
+    // but don't eclipse the whole map.
+    const maxCases = Math.max(1, ...clusters.map(c => c.total_cases));
+    const scale = (cases: number) => Math.max(8, Math.sqrt(cases / maxCases) * 60);
+
+    hotspotChart.setOption({
+      backgroundColor: 'transparent',
+      animation: true,
+      animationDuration: 500,
+      grid: { top: 30, right: 20, bottom: 50, left: 60, containLabel: true },
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: '#1c2128',
+        borderColor: '#30363d',
+        textStyle: { color: '#e2e8f0', fontSize: 12 },
+        formatter: (params: any) => {
+          const v = params.value as number[];
+          if (params.seriesName === 'noise') {
+            return `<div style="color:#4b5563;font-size:11px;margin-bottom:4px">Isolated report (noise)</div>`
+              + `Cases: <strong>${v[2].toLocaleString()}</strong><br/>`
+              + `Lat: ${v[1].toFixed(4)} · Lon: ${v[0].toFixed(4)}`;
+          }
+          return `<div style="color:${color};font-size:11px;margin-bottom:4px">Hotspot cluster</div>`
+            + `<strong>${v[3]} reports → 1 cluster</strong><br/>`
+            + `Total cases: <strong>${v[2].toLocaleString()}</strong><br/>`
+            + `Radius: ${v[4]} km`;
+        },
+      },
+      xAxis: {
+        name: 'Longitude',
+        nameTextStyle: { color: '#4b5563', fontSize: 10 },
+        type: 'value',
+        min: 72.75,
+        max: 73.40,
+        axisLine: { lineStyle: { color: '#30363d' } },
+        splitLine: { lineStyle: { color: '#1c2128' } },
+        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
+      },
+      yAxis: {
+        name: 'Latitude',
+        nameTextStyle: { color: '#4b5563', fontSize: 10 },
+        type: 'value',
+        min: 18.60,
+        max: 19.50,
+        axisLine: { lineStyle: { color: '#30363d' } },
+        splitLine: { lineStyle: { color: '#1c2128' } },
+        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
+      },
+      series: [
+        {
+          name: 'cluster',
+          type: 'scatter',
+          data: clusters.map(c => [c.centroid_lon, c.centroid_lat, c.total_cases, c.report_count, c.radius_km]),
+          symbolSize: (val: number[]) => scale(val[2]),
+          itemStyle: { color, opacity: 0.55, borderColor: color, borderWidth: 1 },
+          emphasis: { itemStyle: { opacity: 0.85 } },
+          zlevel: 2,
+        },
+        {
+          name: 'noise',
+          type: 'scatter',
+          symbol: 'diamond',
+          data: noise_points.map(n => [n.centroid_lon, n.centroid_lat, n.total_cases]),
+          symbolSize: 9,
+          itemStyle: { color: '#374151', opacity: 0.9, borderColor: '#6b7280', borderWidth: 1 },
+          emphasis: { itemStyle: { opacity: 1 } },
+          zlevel: 3,
+        },
+      ],
+    }, true);
+  }
+
+  async function handleViewChange(newView: 'timeseries' | 'hotspots') {
+    if (newView === view) return;
+    view = newView;
+    await tick();
+    if (newView === 'hotspots') {
+      hotspotChart?.dispose();
+      hotspotChart = echarts.init(hotspotChartEl, null, { renderer: 'canvas' });
+      await loadHotspots();
+    } else {
+      chart?.resize();
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   // onMount must be synchronous to return a cleanup function that TypeScript
@@ -291,7 +423,7 @@
   onMount(() => {
     if (!browser) return;
 
-    const resize = () => chart?.resize();
+    const resize = () => { chart?.resize(); hotspotChart?.resize(); };
     window.addEventListener('resize', resize);
 
     // Deferred import — keeps ECharts out of SSR entirely (ssr=false in
@@ -312,6 +444,7 @@
   onDestroy(() => {
     stopPlay();
     chart?.dispose();
+    hotspotChart?.dispose();
   });
 
   // ── Formatting helpers ────────────────────────────────────────────────────
@@ -351,13 +484,29 @@
     <!-- LEFT: controls + stat cards -->
     <aside class="sidebar">
       <section class="controls">
-        <label class="field-label">Disease</label>
+        <!-- View toggle -->
+        <div class="view-toggle">
+          <button
+            class="vtab {view === 'timeseries' ? 'active' : ''}"
+            on:click={() => handleViewChange('timeseries')}
+          >Time Series</button>
+          <button
+            class="vtab {view === 'hotspots' ? 'active' : ''}"
+            on:click={() => handleViewChange('hotspots')}
+          >Hotspot Map</button>
+        </div>
+
+        <label class="field-label mt">Disease</label>
         <div class="disease-list">
           {#each diseases as d}
             <button
               class="disease-btn {selectedDisease === d.disease_name ? 'active' : ''}"
               style="--accent: {diseaseColor(d.disease_name)}"
-              on:click={() => { selectedDisease = d.disease_name; onDiseaseChange(); }}
+              on:click={() => {
+                selectedDisease = d.disease_name;
+                if (view === 'timeseries') onDiseaseChange();
+                else loadHotspots();
+              }}
             >
               <span class="dot" style="background: {diseaseColor(d.disease_name)}"></span>
               {diseaseLabel(d.disease_name)}
@@ -365,23 +514,53 @@
           {/each}
         </div>
 
-        <label class="field-label mt">Region</label>
-        <select on:change={handleRegionChange} class="select">
-          {#each regions as r}
-            <option value={r} selected={r === selectedRegion}>{r}</option>
-          {/each}
-        </select>
+        {#if view === 'timeseries'}
+          <label class="field-label mt">Region</label>
+          <select on:change={handleRegionChange} class="select">
+            {#each regions as r}
+              <option value={r} selected={r === selectedRegion}>{r}</option>
+            {/each}
+          </select>
 
-        <div class="play-row">
-          <button class="play-btn {isPlaying ? 'playing' : ''}" on:click={togglePlay}>
-            {#if isPlaying}
-              <span class="icon">⏸</span> Pause
-            {:else}
-              <span class="icon">▶</span> Play
-            {/if}
-          </button>
-          <span class="play-hint">scrubs through time</span>
-        </div>
+          <div class="play-row">
+            <button class="play-btn {isPlaying ? 'playing' : ''}" on:click={togglePlay}>
+              {#if isPlaying}
+                <span class="icon">⏸</span> Pause
+              {:else}
+                <span class="icon">▶</span> Play
+              {/if}
+            </button>
+            <span class="play-hint">scrubs through time</span>
+          </div>
+        {:else}
+          <label class="field-label mt">Cluster radius (ε km)</label>
+          <input
+            type="number"
+            class="select"
+            min="0.5"
+            max="20"
+            step="0.5"
+            bind:value={epsKm}
+            on:change={loadHotspots}
+          />
+          <label class="field-label mt">Min reports (minPts)</label>
+          <input
+            type="number"
+            class="select"
+            min="1"
+            max="50"
+            step="1"
+            bind:value={minPts}
+            on:change={loadHotspots}
+          />
+          {#if hotspotData.report_count > 0}
+            <div class="hotspot-meta">
+              <span class="meta-val">{hotspotData.report_count.toLocaleString()}</span> reports →
+              <span class="meta-val" style="color: {diseaseColor(selectedDisease)}">{hotspotData.cluster_count}</span> clusters ·
+              <span class="meta-val" style="color:#6b7280">{hotspotData.noise_points.length}</span> noise
+            </div>
+          {/if}
+        {/if}
       </section>
 
       <!-- Headline stat cards (one per disease) -->
@@ -418,21 +597,34 @@
       </section>
     </aside>
 
-    <!-- RIGHT: chart -->
+    <!-- RIGHT: chart (time series or hotspot map) -->
     <main class="chart-area">
-      <div class="chart-header">
-        <span class="chart-title">
-          <span class="dot-lg" style="background: {diseaseColor(selectedDisease)}"></span>
-          {diseaseLabel(selectedDisease)} — {selectedRegion}
-        </span>
-        <span class="chart-sub">confirmed cases &amp; deaths · use the scrubber or ▶ to play through time</span>
-      </div>
-
-      <!-- ECharts mounts here. bind:this gives us the DOM ref for echarts.init() -->
-      <div bind:this={chartEl} class="echarts-container"></div>
-
-      {#if seriesData.length === 0}
-        <div class="no-data">no data for {diseaseLabel(selectedDisease)} / {selectedRegion || '(no region selected)'}</div>
+      {#if view === 'timeseries'}
+        <div class="chart-header">
+          <span class="chart-title">
+            <span class="dot-lg" style="background: {diseaseColor(selectedDisease)}"></span>
+            {diseaseLabel(selectedDisease)} — {selectedRegion}
+          </span>
+          <span class="chart-sub">confirmed cases &amp; deaths · use the scrubber or ▶ to play through time</span>
+        </div>
+        <div bind:this={chartEl} class="echarts-container"></div>
+        {#if seriesData.length === 0}
+          <div class="no-data">no data for {diseaseLabel(selectedDisease)} / {selectedRegion || '(no region selected)'}</div>
+        {/if}
+      {:else}
+        <div class="chart-header">
+          <span class="chart-title">
+            <span class="dot-lg" style="background: {diseaseColor(selectedDisease)}"></span>
+            Outbreak Hotspots — {diseaseLabel(selectedDisease)}
+          </span>
+          <span class="chart-sub">
+            DBSCAN ε={epsKm} km · minPts={minPts} · circles = clusters (size ∝ total cases) · ◇ = isolated noise
+          </span>
+        </div>
+        <div bind:this={hotspotChartEl} class="echarts-container"></div>
+        {#if hotspotData.cluster_count === 0 && hotspotData.noise_points.length === 0}
+          <div class="no-data">no geolocated reports for {diseaseLabel(selectedDisease)}</div>
+        {/if}
       {/if}
     </main>
   </div>
@@ -694,4 +886,36 @@
     color: #374151;
     font-size: 13px;
   }
+
+  /* ── View toggle ──────────────────────────────────────────────── */
+  .view-toggle {
+    display: flex;
+    gap: 2px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 5px;
+    padding: 2px;
+  }
+  .vtab {
+    flex: 1;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 0;
+    transition: background 0.12s, color 0.12s;
+  }
+  .vtab:hover { color: #e2e8f0; }
+  .vtab.active { background: #161b22; color: #e2e8f0; font-weight: 600; }
+
+  /* ── Hotspot meta line ────────────────────────────────────────── */
+  .hotspot-meta {
+    font-size: 10px;
+    color: #4b5563;
+    margin-top: 8px;
+    line-height: 1.6;
+  }
+  .meta-val { font-weight: 700; }
 </style>

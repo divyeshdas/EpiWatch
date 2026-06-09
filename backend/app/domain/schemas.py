@@ -218,6 +218,27 @@ class OutbreakSummary(BaseModel):
     record_count: int
 
 
+class HotspotCluster(BaseModel):
+    """One DBSCAN cluster (or one noise point when cluster_id == -1)."""
+    cluster_id: int
+    centroid_lat: float
+    centroid_lon: float
+    total_cases: int
+    report_count: int
+    radius_km: float
+    member_ids: list[int]
+
+
+class HotspotResponse(BaseModel):
+    """Full response for GET /surveillance/hotspots."""
+    clusters: list[HotspotCluster]       # cluster_id >= 0, sorted total_cases desc
+    noise_points: list[HotspotCluster]   # cluster_id == -1, one per isolated report
+    eps_km: float
+    min_pts: int
+    report_count: int                    # total reports fed into the algorithm
+    cluster_count: int                   # number of real clusters (excludes noise)
+
+
 class AssignmentResponse(BaseModel):
     """
     Full result of POST /emergency/{id}/assign.
