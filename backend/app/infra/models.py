@@ -15,12 +15,12 @@ class Hospital(Base):
     available_beds = Column(Integer, nullable=False, default=0)
     total_icu_beds = Column(Integer, nullable=False, default=0)
     available_icu_beds = Column(Integer, nullable=False, default=0)
-    # ED throughput capacity — separate from inpatient bed count
     emergency_capacity = Column(Integer, nullable=False, default=0)
-    # Raw active-patient count; load factor is derived (current_load / total_beds) at scoring time
     current_load = Column(Integer, nullable=False, default=0)
     specializations = Column(JSONB, nullable=False, default=list)
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    # set by snap script using K-D tree; null until graph is loaded
+    nearest_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=True)
 
 
 class DiseaseReport(Base):
@@ -41,7 +41,6 @@ class EmergencyCase(Base):
     id = Column(Integer, primary_key=True)
     latitude = Column(Double, nullable=False)
     longitude = Column(Double, nullable=False)
-    # STABLE/SERIOUS/CRITICAL/CARDIAC — determines scoring weights in A5
     patient_condition = Column(String, nullable=False)
     status = Column(String, nullable=False, default="PENDING")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
@@ -67,6 +66,7 @@ class GraphNode(Base):
     id = Column(Integer, primary_key=True)
     latitude = Column(Double, nullable=False)
     longitude = Column(Double, nullable=False)
+    # "intersection" for road junctions, "hospital" for hospital-snapped nodes
     node_type = Column(String, nullable=False, default="intersection")
     meta = Column("meta", JSONB, nullable=False, default=dict)
 
@@ -77,6 +77,8 @@ class GraphEdge(Base):
     id = Column(Integer, primary_key=True)
     source_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False)
     target_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False)
-    weight = Column(Double, nullable=False)
-    distance_km = Column(Double, nullable=False)
+    # distance_m: physical road distance in metres (from OSM length attribute)
+    distance_m = Column(Double, nullable=False)
+    # travel_time_s: estimated traversal time in seconds (distance / speed_kph)
+    travel_time_s = Column(Double, nullable=False)
     meta = Column("meta", JSONB, nullable=False, default=dict)

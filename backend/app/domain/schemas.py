@@ -70,3 +70,23 @@ class EmergencyCaseResponse(BaseModel):
     status: str
     created_at: datetime
     assigned_hospital_id: int | None
+
+
+# ── Graph ─────────────────────────────────────────────────────────────────────
+
+class NearestNodeRequest(BaseModel):
+    latitude: Annotated[float, Field(ge=-90, le=90)]
+    longitude: Annotated[float, Field(ge=-180, le=180)]
+
+
+class NearestNodeResponse(BaseModel):
+    node_id: int
+    latitude: float
+    longitude: float
+    distance_m: float
+
+
+class GraphStatsResponse(BaseModel):
+    node_count: int
+    edge_count: int
+    bounding_box: dict[str, float]
