@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Double, ForeignKey, Integer, String, Text, TIMESTAMP, func
+from sqlalchemy import Column, Date, Double, ForeignKey, Integer, String, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.infra.database import Base
@@ -58,6 +58,19 @@ class Alert(Base):
     region = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class OutbreakTimeSeries(Base):
+    """Historical disease case counts from public health data sources (OWID et al.)."""
+    __tablename__ = "outbreak_timeseries"
+
+    id = Column(Integer, primary_key=True)
+    disease_name = Column(String, nullable=False)
+    region = Column(String, nullable=False)
+    date = Column(Date, nullable=False)
+    case_count = Column(Integer, nullable=False, default=0)
+    deaths = Column(Integer, nullable=False, default=0)
+    source = Column(String, nullable=False, default="OWID")
 
 
 class GraphNode(Base):

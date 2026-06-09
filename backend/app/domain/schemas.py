@@ -189,6 +189,35 @@ class TimeSeriesPoint(BaseModel):
     report_count: int
 
 
+# ── Outbreak time-series (analytical, OWID-derived) ──────────────────────────
+
+class DiseaseInfo(BaseModel):
+    """Available disease metadata — used to populate frontend selectors."""
+    disease_name: str
+    regions: list[str]
+    date_from: str   # YYYY-MM-DD of earliest record
+    date_to: str     # YYYY-MM-DD of latest record
+    total_records: int
+
+
+class OutbreakPoint(BaseModel):
+    """One observation in a disease × region time series."""
+    date: str        # YYYY-MM-DD
+    case_count: int
+    deaths: int
+    source: str
+
+
+class OutbreakSummary(BaseModel):
+    """Aggregate stats per disease — used for headline stat cards."""
+    disease_name: str
+    total_cases: int
+    total_deaths: int
+    peak_cases: int
+    peak_date: str | None
+    record_count: int
+
+
 class AssignmentResponse(BaseModel):
     """
     Full result of POST /emergency/{id}/assign.

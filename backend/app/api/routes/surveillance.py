@@ -1,39 +1,43 @@
 """
 Surveillance API — Pillar B (Outbreak Monitoring).
 
-Endpoints:
+Operational endpoints (disease_reports table — real-time incident reports):
   POST /surveillance/reports              Ingest a new disease report
   GET  /surveillance/reports              List/filter reports
   GET  /surveillance/reports/{id}         Single report by ID
   GET  /surveillance/summary/by-region    Aggregated totals per region (→ B2 input)
   GET  /surveillance/summary/time-series  Daily series for one region (→ B3 input)
 
-Why this separation from the emergency router (Pillar A):
-  Pillar A and Pillar B are independent data streams that only meet at the
-  event bus — A emits RouteComputed/AmbulanceAssigned; B emits
-  OutbreakDetected/AlertGenerated.  Separate routers enforce this boundary
-  at the API layer.
+Analytical endpoints (outbreak_timeseries table — OWID historical data):
+  GET  /surveillance/diseases             Available diseases + regions + date range
+  GET  /surveillance/timeseries           Ordered time-series for one disease+region
+  GET  /surveillance/summary              Totals/peaks per disease (headline cards)
 
-Why a dedicated summary/by-region endpoint:
-  Raw disease_reports rows are too fine-grained for clustering (B2 needs one
-  centroid and one total-case count per region, not hundreds of individual
-  rows).  Aggregation happens in the DB via GROUP BY, not in Python, so it
-  scales as the table grows.
+Why two separate tables served from the same router:
+  disease_reports is operational: individual field reports, timestamptz precision,
+  used for real-time alerting and B2/B3 input.
+  outbreak_timeseries is analytical: calendar-day aggregates from OWID, used for
+  the ECharts historical visualization.  Both live under /surveillance because they
+  represent the same concern (disease surveillance) at different granularities.
 """
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_bus, get_surveillance_repo
+from app.api.deps import get_bus, get_outbreak_repo, get_surveillance_repo
 from app.domain.events import Event, EventType
 from app.domain.schemas import (
+    DiseaseInfo,
     DiseaseReportCreate,
     DiseaseReportResponse,
+    OutbreakPoint,
+    OutbreakSummary,
     RegionSummary,
     TimeSeriesPoint,
 )
 from app.events.bus import EventBus
 from app.repositories.surveillance import SurveillanceRepository
+from app.surveillance.repository import OutbreakRepository
 
 router = APIRouter(prefix="/surveillance", tags=["surveillance"])
 
@@ -132,3 +136,71 @@ async def time_series(
     """
     points = await repo.time_series(region=region, disease=disease, days=days)
     return [TimeSeriesPoint(**p) for p in points]
+
+
+# ── Analytical endpoints (outbreak_timeseries / OWID historical data) ─────────
+
+@router.get("/diseases", response_model=list[DiseaseInfo])
+async def list_diseases(
+    repo: OutbreakRepository = Depends(get_outbreak_repo),
+) -> list[DiseaseInfo]:
+    """
+    Return one entry per disease with its available regions and date range.
+    The frontend uses this to populate the disease selector and region dropdown
+    before fetching any time-series data.
+    """
+    rows = await repo.disease_metadata()
+    return [DiseaseInfo(**row) for row in rows]
+
+
+@router.get("/timeseries", response_model=list[OutbreakPoint])
+async def get_timeseries(
+    disease: str = Query(description="Disease slug (e.g. covid_19, measles)"),
+    region: str = Query(description="Region name (e.g. India, Nigeria)"),
+    from_date: str | None = Query(
+        default=None,
+        description="Start date inclusive (YYYY-MM-DD)",
+    ),
+    to_date: str | None = Query(
+        default=None,
+        description="End date inclusive (YYYY-MM-DD)",
+    ),
+    repo: OutbreakRepository = Depends(get_outbreak_repo),
+) -> list[OutbreakPoint]:
+    """
+    Return ordered time-series (oldest → newest) for one disease × region pair.
+
+    Used by the ECharts frontend to render the case-count area chart.  The
+    date parameters accept ISO 8601 date strings (YYYY-MM-DD); omit them to
+    get the full available history.
+    """
+    from datetime import date as _date
+
+    try:
+        fd = _date.fromisoformat(from_date) if from_date else None
+        td = _date.fromisoformat(to_date) if to_date else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid date: {exc}") from exc
+
+    rows = await repo.timeseries(disease, region, from_date=fd, to_date=td)
+    return [
+        OutbreakPoint(
+            date=r.date.isoformat(),
+            case_count=r.case_count,
+            deaths=r.deaths,
+            source=r.source,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/summary", response_model=list[OutbreakSummary])
+async def outbreak_summary(
+    repo: OutbreakRepository = Depends(get_outbreak_repo),
+) -> list[OutbreakSummary]:
+    """
+    Headline stats per disease: total cases, deaths, peak period.
+    Used for the stat cards at the top of the surveillance page.
+    """
+    rows = await repo.summary()
+    return [OutbreakSummary(**row) for row in rows]

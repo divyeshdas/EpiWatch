@@ -42,6 +42,9 @@
 <main>
   <h1>EpiWatch — real-time spine demo</h1>
   <p>WebSocket: <strong>{connected ? 'connected' : 'connecting…'}</strong></p>
+  <nav style="margin-bottom:1rem">
+    <a href="/surveillance">→ Outbreak History (ECharts)</a>
+  </nav>
   <button on:click={ping} disabled={!connected}>POST /demo/ping</button>
 
   <h2>Event log ({events.length})</h2>

@@ -25,3 +25,8 @@ def get_emergency_repo(db: AsyncSession = Depends(get_db)) -> EmergencyCaseRepos
 def get_surveillance_repo(db: AsyncSession = Depends(get_db)):
     from app.repositories.surveillance import SurveillanceRepository
     return SurveillanceRepository(db)
+
+
+def get_outbreak_repo(db: AsyncSession = Depends(get_db)):
+    from app.surveillance.repository import OutbreakRepository
+    return OutbreakRepository(db)
