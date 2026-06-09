@@ -5,20 +5,15 @@ from app.domain.schemas import GraphStatsResponse, NearestNodeRequest, NearestNo
 router = APIRouter(prefix="/graph", tags=["graph"])
 
 
-def _require_graph():
-    from app.graph.loader import kd_tree, road_graph
-    if road_graph is None or kd_tree is None:
-        raise HTTPException(
-            status_code=503,
-            detail="graph not loaded — run ingest + snap scripts first",
-        )
-    return road_graph, kd_tree
-
-
 @router.post("/nearest-node", response_model=NearestNodeResponse)
 async def nearest_node(body: NearestNodeRequest) -> NearestNodeResponse:
-    _, tree = _require_graph()
-    node_id, node_lat, node_lon, dist_m = tree.nearest(body.latitude, body.longitude)
+    from app.graph.loader import kd_tree
+    if kd_tree is None:
+        raise HTTPException(
+            status_code=503,
+            detail="graph not ready — run ingest + snap scripts first",
+        )
+    node_id, node_lat, node_lon, dist_m = kd_tree.nearest(body.latitude, body.longitude)
     return NearestNodeResponse(
         node_id=node_id,
         latitude=node_lat,
@@ -29,9 +24,9 @@ async def nearest_node(body: NearestNodeRequest) -> NearestNodeResponse:
 
 @router.get("/stats", response_model=GraphStatsResponse)
 async def graph_stats() -> GraphStatsResponse:
-    graph, _ = _require_graph()
+    from app.graph.loader import road_graph
     return GraphStatsResponse(
-        node_count=graph.node_count(),
-        edge_count=graph.edge_count(),
-        bounding_box=graph.bounding_box(),
+        node_count=road_graph.node_count(),
+        edge_count=road_graph.edge_count(),
+        bounding_box=road_graph.bounding_box(),
     )

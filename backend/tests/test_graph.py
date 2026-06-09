@@ -4,12 +4,14 @@ Tests for the K-D tree, in-memory road graph, and hospital snap logic.
 All tests use the synthetic grid — no OSM download, no database connection.
 """
 import math
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.graph.haversine import haversine
 from app.graph.kdtree import KDTree
 from app.graph.road_graph import RoadGraph
+from app.infra.models import GraphEdge, GraphNode
 from tests.graph_fixtures import _LAT0, _LON0, _STEP, make_grid, node_id
 
 
@@ -178,3 +180,150 @@ class TestHospitalSnap:
         expected = node_id(4, 4, 5)  # bottom-right corner of 5×5 grid (max i, max j)
         found_id, _, _, _ = tree.nearest(query_lat, query_lon)
         assert found_id == expected
+
+
+# ── Schema-spec regression tests ──────────────────────────────────────────────
+# These tests guard against model/migration column-name drift.
+# MagicMock(spec=GraphNode) constrains attribute access to the real model's
+# attributes — so accessing .lat instead of .latitude raises AttributeError
+# immediately, failing the test before the bug reaches production.
+
+class TestSchemaSpec:
+    """RoadGraph.from_db must access the columns the ORM model actually defines."""
+
+    def _make_node(self, nid: int, lat: float, lon: float) -> MagicMock:
+        node = MagicMock(spec=GraphNode)
+        node.id = nid
+        node.latitude = lat
+        node.longitude = lon
+        return node
+
+    def _make_edge(
+        self,
+        src: int,
+        tgt: int,
+        dist_m: float,
+        travel_time_s: float,
+    ) -> MagicMock:
+        edge = MagicMock(spec=GraphEdge)
+        edge.source_node_id = src
+        edge.target_node_id = tgt
+        edge.distance_m = dist_m
+        edge.travel_time_s = travel_time_s
+        return edge
+
+    def test_from_db_reads_latitude_longitude(self):
+        """from_db must read .latitude/.longitude, not .lat/.lon."""
+        nodes = [self._make_node(1, 19.00, 72.85), self._make_node(2, 19.01, 72.86)]
+        edges = [self._make_edge(1, 2, 1500.0, 180.0)]
+        # This raises AttributeError if .lat or .lon is accessed on a spec'd mock.
+        graph = RoadGraph.from_db(nodes, edges)
+        assert graph.node_count() == 2
+        assert graph.edge_count() == 1
+
+    def test_from_db_reads_distance_m_and_travel_time_s(self):
+        """from_db must read .distance_m/.travel_time_s, not .weight/.distance_km."""
+        nodes = [self._make_node(1, 19.00, 72.85), self._make_node(2, 19.01, 72.86)]
+        edges = [self._make_edge(1, 2, 2200.0, 264.0)]
+        graph = RoadGraph.from_db(nodes, edges)
+        edge_list = graph.neighbors(1)
+        assert len(edge_list) == 1
+        assert edge_list[0].distance_m == pytest.approx(2200.0)
+        assert edge_list[0].travel_time_s == pytest.approx(264.0)
+
+    def test_spec_mock_rejects_old_column_names(self):
+        """Verifies that the spec'd mock itself would reject stale attribute names."""
+        node = MagicMock(spec=GraphNode)
+        with pytest.raises(AttributeError):
+            _ = node.lat
+        with pytest.raises(AttributeError):
+            _ = node.lon
+        edge = MagicMock(spec=GraphEdge)
+        with pytest.raises(AttributeError):
+            _ = edge.weight
+        with pytest.raises(AttributeError):
+            _ = edge.distance_km
+
+
+# ── load_graph behaviour tests ─────────────────────────────────────────────────
+
+class TestLoadGraph:
+    """load_graph must handle empty tables and populated tables without crashing."""
+
+    def _make_db_session(self, node_rows: list, edge_rows: list) -> AsyncMock:
+        """Returns an AsyncMock db session whose execute().scalars().all() returns the given rows."""
+        scalars_nodes = MagicMock()
+        scalars_nodes.all.return_value = node_rows
+        result_nodes = MagicMock()
+        result_nodes.scalars.return_value = scalars_nodes
+
+        scalars_edges = MagicMock()
+        scalars_edges.all.return_value = edge_rows
+        result_edges = MagicMock()
+        result_edges.scalars.return_value = scalars_edges
+
+        db = AsyncMock()
+        # First execute call → nodes, second → edges
+        db.execute.side_effect = [result_nodes, result_edges]
+        return db
+
+    @pytest.mark.asyncio
+    async def test_load_graph_empty_table_sets_empty_graph(self):
+        """When graph_nodes is empty, road_graph stays empty and kd_tree is None."""
+        import app.graph.loader as loader_module
+
+        db = self._make_db_session(node_rows=[], edge_rows=[])
+        with patch.object(loader_module, "road_graph", RoadGraph()), \
+             patch.object(loader_module, "kd_tree", None):
+            await loader_module.load_graph(db)
+            assert loader_module.road_graph.node_count() == 0
+            assert loader_module.kd_tree is None
+
+    @pytest.mark.asyncio
+    async def test_load_graph_populates_graph_and_kd_tree(self):
+        """When rows exist, road_graph and kd_tree are both populated."""
+        import app.graph.loader as loader_module
+
+        nodes_data = [
+            (1, 19.00, 72.85),
+            (2, 19.01, 72.85),
+            (3, 19.00, 72.86),
+        ]
+        edges_data = [
+            (1, 2, 1100.0, 132.0),
+            (1, 3, 1000.0, 120.0),
+        ]
+
+        def _node(nid, lat, lon):
+            n = MagicMock(spec=GraphNode)
+            n.id, n.latitude, n.longitude = nid, lat, lon
+            return n
+
+        def _edge(src, tgt, dist, tt):
+            e = MagicMock(spec=GraphEdge)
+            e.source_node_id, e.target_node_id = src, tgt
+            e.distance_m, e.travel_time_s = dist, tt
+            return e
+
+        node_mocks = [_node(*r) for r in nodes_data]
+        edge_mocks = [_edge(*r) for r in edges_data]
+        db = self._make_db_session(node_mocks, edge_mocks)
+
+        await loader_module.load_graph(db)
+
+        assert loader_module.road_graph.node_count() == 3
+        assert loader_module.road_graph.edge_count() == 2
+        assert loader_module.kd_tree is not None
+
+    @pytest.mark.asyncio
+    async def test_load_graph_db_error_leaves_empty_graph(self):
+        """A DB exception must not crash the server — empty graph is the fallback."""
+        import app.graph.loader as loader_module
+
+        db = AsyncMock()
+        db.execute.side_effect = Exception("column graph_nodes.latitude does not exist")
+
+        await loader_module.load_graph(db)
+
+        assert loader_module.road_graph.node_count() == 0
+        assert loader_module.kd_tree is None
