@@ -49,6 +49,7 @@ class HospitalResponse(BaseModel):
     emergency_capacity: int
     current_load: int
     specializations: list[str]
+    region: str | None = None
     updated_at: datetime
 
 
@@ -126,19 +127,21 @@ class FactorScoreResponse(BaseModel):
     penalty: float       # Mapped to [0, 1]: 0 = ideal, 1 = worst
     weight: float        # Condition-keyed weight applied
     contribution: float  # penalty × weight — this factor's slice of total_score
+    note: str = ""       # human-readable explanation (used by the surge factor)
 
 
 class ScoredHospitalResponse(BaseModel):
     """A hospital that passed filtering, with its route and explainable breakdown."""
     hospital_id: int
     hospital_name: str
+    region: str | None = None
     rank: int            # 1 = best (lowest score) — rank 1 is the assignment winner
-    total_score: float   # Weighted sum of penalty factors; lower is better; ∈ [0, 1]
+    total_score: float   # Weighted sum of penalty factors; lower is better; ∈ [0, 1 + surge_weight]
     travel_time_s: float
     distance_m: float
     path: list[RouteNode]
     # Per-factor breakdown keyed by name: travel_time, bed_availability,
-    # icu_availability, load_factor, specialization
+    # icu_availability, load_factor, specialization, surge
     factors: dict[str, FactorScoreResponse]
 
 

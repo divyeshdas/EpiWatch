@@ -21,6 +21,10 @@ class Hospital(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     # set by snap script using K-D tree; null until graph is loaded
     nearest_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=True)
+    # B4: surveillance region this hospital belongs to (one of the B2
+    # _REGIONS neighbourhood names). Used to look up surge state -- see
+    # app.scoring.surge. Nullable for hospitals not yet mapped to a region.
+    region = Column(String, nullable=True)
 
 
 class DiseaseReport(Base):

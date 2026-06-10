@@ -17,6 +17,12 @@ Spike detection / alerts (B3, outbreak_timeseries-driven):
   GET  /surveillance/spikes               Read-only z-score detections (chart markers)
   POST /surveillance/scan                 Detect + persist alerts + emit AlertGenerated
 
+Surveillance-aware routing demo trigger (B4):
+  POST /surveillance/simulate-alert       Manually raise an OUTBREAK_SPIKE alert
+                                           for a region, to demonstrate the
+                                           event-driven surge penalty in
+                                           app.scoring.surge / scorer.py
+
 Why two separate tables served from the same router:
   disease_reports is operational: individual field reports, timestamptz precision,
   used for real-time alerting and B2/B3 input.
@@ -24,7 +30,7 @@ Why two separate tables served from the same router:
   the ECharts historical visualization.  Both live under /surveillance because they
   represent the same concern (disease surveillance) at different granularities.
 """
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -413,3 +419,71 @@ async def scan_for_spikes(
         ],
         new_alerts=[AlertResponse.model_validate(a) for a in new_alerts],
     )
+
+
+# ── Surveillance-aware routing demo trigger (B4) ──────────────────────────────
+
+_VALID_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
+
+@router.post("/simulate-alert", response_model=AlertResponse)
+async def simulate_alert(
+    disease: str = Query(description="Disease slug (e.g. dengue)"),
+    region: str = Query(description="Region name (e.g. Bandra) — must match a hospital's region for the surge penalty to apply, see Hospital.region"),
+    severity: str = Query(description="LOW | MEDIUM | HIGH | CRITICAL"),
+    event_date: str | None = Query(default=None, description="YYYY-MM-DD, defaults to today"),
+    alert_repo: AlertRepository = Depends(get_alert_repo),
+    bus: EventBus = Depends(get_bus),
+) -> AlertResponse:
+    """
+    B4 demo trigger: manually raise an OUTBREAK_SPIKE alert for a region
+    without running the full B3 z-score scan.
+
+    /surveillance/scan only operates on outbreak_timeseries, which is keyed
+    by OWID country-level regions ("India", "Brazil", ...) — too coarse to
+    differentiate individual Mumbai hospitals.  Hospitals are instead mapped
+    to Mumbai-neighbourhood regions (Hospital.region, see app/seed.py).  This
+    endpoint raises a spike alert directly for one of those neighbourhoods, so
+    the event-driven surge penalty (app.scoring.surge) can be exercised end to
+    end: persist the alert, emit AlertGenerated, the surge handler updates the
+    surge store, and the next /emergency/{id}/assign for a hospital in that
+    region reflects the penalty.
+
+    Reuses the same persistence (AlertRepository.create_spike_alert, with its
+    idempotency guarantee) and event (AlertGenerated) as /scan — this is not
+    new detection logic.
+    """
+    severity = severity.upper()
+    if severity not in _VALID_SEVERITIES:
+        raise HTTPException(status_code=422, detail=f"severity must be one of {sorted(_VALID_SEVERITIES)}")
+
+    ed = event_date or date.today().isoformat()
+    message = f"{disease} in {region}: manually triggered {severity} surge (B4 demo) on {ed}"
+
+    alert = await alert_repo.create_spike_alert(
+        disease_name=disease,
+        region=region,
+        event_date=ed,
+        severity=severity,
+        z_score=None,
+        message=message,
+    )
+    if alert is None:
+        raise HTTPException(status_code=409, detail="an alert for this disease/region/date already exists")
+
+    await bus.publish(Event(
+        type=EventType.ALERT_GENERATED,
+        payload={
+            "alert_id": alert["id"],
+            "type": alert["type"],
+            "severity": alert["severity"],
+            "message": alert["message"],
+            "region": alert["region"],
+            "disease_name": alert["disease_name"],
+            "event_date": alert["event_date"],
+            "z_score": alert["z_score"],
+            "created_at": alert["created_at"].isoformat(),
+        },
+    ))
+
+    return AlertResponse.model_validate(alert)

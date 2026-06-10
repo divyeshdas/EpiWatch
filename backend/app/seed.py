@@ -25,6 +25,7 @@ _HOSPITALS = [
         "emergency_capacity": 180,
         "current_load": 1460,
         "specializations": ["general", "trauma", "pediatric"],
+        "region": "Dadar",
     },
     {
         "name": "Hinduja Hospital",
@@ -37,6 +38,7 @@ _HOSPITALS = [
         "emergency_capacity": 60,
         "current_load": 265,
         "specializations": ["cardiac", "general", "orthopedic"],
+        "region": "Dharavi",
     },
     {
         "name": "Lilavati Hospital",
@@ -49,6 +51,7 @@ _HOSPITALS = [
         "emergency_capacity": 55,
         "current_load": 248,
         "specializations": ["general", "oncology", "neurology"],
+        "region": "Bandra",
     },
     {
         "name": "Breach Candy Hospital",
@@ -61,6 +64,7 @@ _HOSPITALS = [
         "emergency_capacity": 40,
         "current_load": 155,
         "specializations": ["pediatric", "general", "cardiac"],
+        "region": "Worli",
     },
     {
         "name": "Jaslok Hospital",
@@ -73,6 +77,7 @@ _HOSPITALS = [
         "emergency_capacity": 65,
         "current_load": 262,
         "specializations": ["cardiac", "oncology", "general"],
+        "region": "Worli",
     },
     {
         "name": "Nanavati Hospital",
@@ -85,6 +90,7 @@ _HOSPITALS = [
         "emergency_capacity": 70,
         "current_load": 255,
         "specializations": ["general", "orthopedic", "trauma"],
+        "region": "Andheri",
     },
     {
         "name": "Cooper Hospital",
@@ -97,6 +103,7 @@ _HOSPITALS = [
         "emergency_capacity": 150,
         "current_load": 1220,
         "specializations": ["general", "trauma", "pediatric"],
+        "region": "Andheri",
     },
     {
         "name": "Bombay Hospital",
@@ -109,6 +116,7 @@ _HOSPITALS = [
         "emergency_capacity": 80,
         "current_load": 340,
         "specializations": ["cardiac", "general", "neurology"],
+        "region": "Worli",
     },
     {
         "name": "Seven Hills Hospital",
@@ -121,6 +129,7 @@ _HOSPITALS = [
         "emergency_capacity": 160,
         "current_load": 1180,
         "specializations": ["general", "trauma", "oncology"],
+        "region": "Andheri",
     },
     {
         "name": "Wockhardt Hospital Mulund",
@@ -133,6 +142,7 @@ _HOSPITALS = [
         "emergency_capacity": 55,
         "current_load": 222,
         "specializations": ["cardiac", "general", "orthopedic"],
+        "region": "Mulund",
     },
 ]
 

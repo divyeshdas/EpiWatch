@@ -27,6 +27,9 @@ Hospital scoring engine for the EpiWatch triage system.
      icu_availability 1 − available_icu / total_icu    (already in [0,1])
      load_factor      current_load / total_beds        (already in [0,1])
      specialization   binary: 0 if condition's specialty matches, 1 otherwise
+     surge            current surge level for the hospital's region, looked
+                       up from app.scoring.surge (already in [0,1], 0 if no
+                       active surge — see below)
 
    Edge cases handled:
      • Single candidate: travel penalty = 0 (nothing to compare against)
@@ -36,12 +39,21 @@ Hospital scoring engine for the EpiWatch triage system.
        CRITICAL/CARDIAC, but handles STABLE/SERIOUS hospitals gracefully)
 
 3. WEIGHT
-   Each penalty is multiplied by the condition-keyed weight from weights.py.
-   total_score = Σ (weight_i × penalty_i)
+   Each of the five clinical penalties is multiplied by the condition-keyed
+   weight from weights.py; those five weights sum to 1.0 (enforced by
+   ScoringWeights.__post_init__).  The surge penalty is then added on top,
+   multiplied by settings.surge_weight:
 
-   The score is in [0, 1] because:
-     - each penalty ∈ [0, 1]
-     - weights sum to 1.0 (enforced by ScoringWeights.__post_init__)
+     total_score = Σ (weight_i × penalty_i)  +  surge_weight × surge_level
+
+   With no active surge, surge_level == 0 for every hospital, so total_score
+   is identical to pre-B4 behaviour and stays in [0, 1].  With an active
+   surge, a hospital in the surging region gets an extra penalty up to
+   surge_weight, on top of its clinical score (total_score ∈ [0, 1 + surge_weight]).
+   This is deliberate: the surge penalty is an operational layer over the
+   clinical weighting, not part of it — surveillance-aware routing shouldn't
+   change *how* the system reasons about a patient's clinical needs, only
+   nudge it away from a region about to be saturated.
 
    Lower score = better hospital.
 
@@ -70,7 +82,8 @@ hospitals and checking graph readiness before calling the scorer.
 ─── Complexity ───────────────────────────────────────────────────────────────
 For H hospitals and a graph with V nodes and E edges:
   Routing:     O(H × (V + E) log V) — one A* per reachable candidate
-  Scoring:     O(H × F) where F = 5 (constant number of factors)
+  Scoring:     O(H × F) where F = 6 (constant number of factors, including
+               the B4 surge factor — its lookup is O(1) per hospital)
   Sorting:     O(H log H)
   Total:       O(H × (V + E) log V)
 
@@ -82,10 +95,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from app.config import settings
 from app.graph.astar import _max_haversine_speed_m_per_s, astar
 from app.graph.haversine import haversine
 from app.graph.road_graph import RoadGraph
 from app.infra.models import Hospital
+from app.scoring.surge import SurgeInfo, get_surge
 from app.scoring.weights import SPECIALTY_REQUIREMENT, WEIGHTS, ScoringWeights
 
 
@@ -98,6 +113,7 @@ class FactorScore:
     penalty: float       # Mapped to [0, 1]: 0 = best, 1 = worst
     weight: float        # From the condition's ScoringWeights
     contribution: float  # penalty × weight — this factor's slice of total_score
+    note: str = ""       # human-readable explanation (used by the surge factor)
 
 
 @dataclass
@@ -224,7 +240,8 @@ def score_hospitals(
             if tt_range > 0
             else 0.0
         )
-        factors = _compute_factors(candidate.hospital, tt_penalty, spec_tag, weights)
+        surge_info = get_surge(candidate.hospital.region)
+        factors = _compute_factors(candidate.hospital, tt_penalty, spec_tag, weights, surge_info)
         candidate.factors = factors
         candidate.total_score = sum(f.contribution for f in factors.values())
 
@@ -279,9 +296,11 @@ def _compute_factors(
     travel_time_penalty: float,
     spec_tag: str | None,
     weights: ScoringWeights,
+    surge_info: SurgeInfo,
 ) -> dict[str, FactorScore]:
     """
-    Compute the five penalty factors for one hospital.
+    Compute the six penalty factors for one hospital: the five clinical
+    factors plus the B4 surge factor.
 
     Returns a dict keyed by factor name so callers can access individual
     contributions by name (e.g. factors["travel_time"].contribution).
@@ -309,6 +328,18 @@ def _compute_factors(
         spec_penalty = 0.0   # any hospital matches for this condition
     else:
         spec_penalty = 0.0 if spec_tag in (hospital.specializations or []) else 1.0
+
+    # ── surge penalty (B4) ────────────────────────────────────────────────────
+    # Added on top of the existing 1.0 weight budget: with no active surge
+    # (surge_info.level == 0), this contributes exactly 0 and total_score is
+    # unchanged from pre-B4 behaviour.
+    if surge_info.level > 0:
+        surge_note = (
+            f"penalized: {surge_info.disease_name} surge in "
+            f"{surge_info.region}, severity {surge_info.severity}"
+        )
+    else:
+        surge_note = f"no active outbreak surge in {hospital.region or 'an unmapped region'}"
 
     return {
         "travel_time": FactorScore(
@@ -341,6 +372,13 @@ def _compute_factors(
             penalty=spec_penalty,
             weight=weights.specialization,
             contribution=spec_penalty * weights.specialization,
+        ),
+        "surge": FactorScore(
+            raw=surge_info.level,
+            penalty=surge_info.level,
+            weight=settings.surge_weight,
+            contribution=surge_info.level * settings.surge_weight,
+            note=surge_note,
         ),
     }
 

@@ -162,6 +162,7 @@ def _serialise_candidate(c: "ScoredCandidate", road_graph) -> ScoredHospitalResp
             penalty=fs.penalty,
             weight=fs.weight,
             contribution=fs.contribution,
+            note=fs.note,
         )
         for name, fs in c.factors.items()
     }
@@ -169,6 +170,7 @@ def _serialise_candidate(c: "ScoredCandidate", road_graph) -> ScoredHospitalResp
     return ScoredHospitalResponse(
         hospital_id=c.hospital.id,
         hospital_name=c.hospital.name,
+        region=c.hospital.region,
         rank=c.rank,
         total_score=c.total_score,
         travel_time_s=c.travel_time_s,

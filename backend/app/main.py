@@ -10,6 +10,7 @@ from app.events.redis_backend import RedisEventBus
 from app.api.routes import ws, demo, hospitals, emergency, graph, route, surveillance, alerts
 from app.graph.loader import load_graph
 from app.infra.database import get_session_factory
+from app.scoring import surge
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ async def lifespan(app: FastAPI):
     # event bus
     bus = RedisEventBus(settings.redis_url)
     bus.subscribe(ws.manager.broadcast)
+    # B4: surveillance-aware routing — AlertGenerated -> surge store, read by
+    # the hospital scorer. The only coupling between the pillars.
+    bus.subscribe(surge.handle_alert_generated)
     asyncio.create_task(bus.listen())
 
     # road graph (no-op if ingest hasn't been run yet)

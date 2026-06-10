@@ -572,9 +572,9 @@ class TestAssignEndpoint:
         candidate = resp.json()["candidates"][0]
         factors = candidate["factors"]
 
-        # All five factors must be present
+        # All six factors must be present (B4 adds "surge")
         expected_factors = {"travel_time", "bed_availability", "icu_availability",
-                            "load_factor", "specialization"}
+                            "load_factor", "specialization", "surge"}
         assert set(factors.keys()) == expected_factors
 
         # Each factor has the required fields

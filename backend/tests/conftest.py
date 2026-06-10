@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.deps import get_bus, get_emergency_repo, get_hospital_repo
 from app.infra.models import EmergencyCase, Hospital
 from app.main import app
+from app.scoring import surge
 
 
 def _hospital(overrides: dict | None = None) -> Hospital:
@@ -22,6 +23,7 @@ def _hospital(overrides: dict | None = None) -> Hospital:
         emergency_capacity=40,
         current_load=150,
         specializations=["general", "trauma"],
+        region=None,
         updated_at=datetime.now(timezone.utc),
     )
     for k, v in (overrides or {}).items():
@@ -42,6 +44,15 @@ def _case(overrides: dict | None = None) -> EmergencyCase:
     for k, v in (overrides or {}).items():
         setattr(c, k, v)
     return c
+
+
+@pytest.fixture(autouse=True)
+def _reset_surge_state():
+    """Surge state is a module-level store (app.scoring.surge) so it doesn't
+    leak between tests."""
+    surge.clear()
+    yield
+    surge.clear()
 
 
 @pytest.fixture

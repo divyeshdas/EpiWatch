@@ -44,7 +44,7 @@ class AlertRepository:
         region: str,
         event_date: str,
         severity: str,
-        z_score: float,
+        z_score: float | None,
         message: str,
     ) -> dict | None:
         """
