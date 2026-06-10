@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
+  import { theme, toggleTheme } from '$lib/stores/theme';
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -17,34 +18,6 @@
     case_count: number;
     deaths: number;
     source: string;
-  };
-
-  type SummaryRow = {
-    disease_name: string;
-    total_cases: number;
-    total_deaths: number;
-    peak_cases: number;
-    peak_date: string | null;
-    record_count: number;
-  };
-
-  type HotspotCluster = {
-    cluster_id: number;
-    centroid_lat: number;
-    centroid_lon: number;
-    total_cases: number;
-    report_count: number;
-    radius_km: number;
-    member_ids: number[];
-  };
-
-  type HotspotResponse = {
-    clusters: HotspotCluster[];
-    noise_points: HotspotCluster[];
-    eps_km: number;
-    min_pts: number;
-    report_count: number;
-    cluster_count: number;
   };
 
   type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -80,61 +53,172 @@
     new_alerts: AlertRow[];
   };
 
-  // ── State ──────────────────────────────────────────────────────────────────
+  type RiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'SEVERE';
+
+  // Per (disease, country) combination — the unit everything else aggregates.
+  type DiseaseSeries = {
+    disease: string;
+    series: OutbreakPoint[];
+    spikes: SpikeDetection[];
+    topSpike: SpikeDetection | null;
+    latestCases: number;
+    latestDeaths: number;
+    pctChange: number | null;
+    riskScore: number;
+  };
+
+  // One country: its diseases, plus the aggregate that drives the map +
+  // detail panel (the "primary" disease is whichever currently scores
+  // highest risk for that country).
+  type CountryEntry = {
+    country: string;
+    geoName: string;
+    diseases: DiseaseSeries[];
+    primary: DiseaseSeries;
+    riskScore: number;
+    riskLevel: RiskLevel;
+    totalCases: number;
+    pctChange: number | null;
+    anomalyZ: number | null;
+  };
+
+  // ── Constants ──────────────────────────────────────────────────────────────
 
   const API = 'http://localhost:8000/surveillance';
 
-  // Disease colours: meaningful mapping — red for high-fatality diseases,
-  // amber for vector-borne, cyan for water-borne, orange for highly contagious.
   const DISEASE_COLORS: Record<string, string> = {
-    covid_19:    '#f59e0b',   // amber — respiratory, highly transmissible
-    measles:     '#ef4444',   // red — high death toll historically
-    dengue:      '#06b6d4',   // cyan — vector-borne (mosquito)
-    cholera:     '#a78bfa',   // purple — water-borne
+    covid_19: '#f59e0b',
+    measles: '#ef4444',
+    dengue: '#06b6d4',
+    cholera: '#a78bfa',
   };
 
   const DISEASE_LABELS: Record<string, string> = {
     covid_19: 'COVID-19',
-    measles:  'Measles',
-    dengue:   'Dengue',
-    cholera:  'Cholera',
+    measles: 'Measles',
+    dengue: 'Dengue',
+    cholera: 'Cholera',
   };
 
-  // Severity scale — meaningful, never decorative: green -> red as B3 alerts escalate.
   const SEVERITY_COLORS: Record<Severity, string> = {
-    LOW:      '#22c55e',
-    MEDIUM:   '#f59e0b',
-    HIGH:     '#f97316',
+    LOW: '#22c55e',
+    MEDIUM: '#f59e0b',
+    HIGH: '#f97316',
     CRITICAL: '#ef4444',
   };
   const SEVERITY_MARK_SIZE: Record<Severity, number> = {
-    LOW: 8, MEDIUM: 11, HIGH: 14, CRITICAL: 18,
+    LOW: 7, MEDIUM: 10, HIGH: 13, CRITICAL: 17,
   };
+
+  // Risk levels reuse the same colour scale as alert severity — green to
+  // red is the one meaningful colour code across the whole app.
+  const RISK_COLORS: Record<RiskLevel, string> = {
+    LOW: '#22c55e',
+    MODERATE: '#f59e0b',
+    HIGH: '#f97316',
+    SEVERE: '#ef4444',
+  };
+  const RISK_LABELS: Record<RiskLevel, string> = {
+    LOW: 'Low', MODERATE: 'Moderate', HIGH: 'High', SEVERE: 'Severe',
+  };
+
+  // Maps backend region/country names to the feature names used by the
+  // bundled world-atlas (Natural Earth) GeoJSON.
+  const COUNTRY_GEO_NAMES: Record<string, string> = {
+    India: 'India',
+    Brazil: 'Brazil',
+    Germany: 'Germany',
+    'United States': 'United States of America',
+    DRC: 'Dem. Rep. Congo',
+    Yemen: 'Yemen',
+    Indonesia: 'Indonesia',
+    Philippines: 'Philippines',
+    Ethiopia: 'Ethiopia',
+    Nigeria: 'Nigeria',
+    Pakistan: 'Pakistan',
+  };
+
+  // Mirrors app.config.settings.spike_window_size (backend) — the trailing
+  // window the z-score detector uses as its baseline.
+  const SPIKE_BASELINE_MONTHS = 6;
+
+  // Inline icon set (lucide-style strokes). Static, developer-authored
+  // markup — safe to render with {@html}. Kept as plain strings so the
+  // template isn't drowned in SVG path data.
+  const ICON_ATTRS = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+  const ICONS: Record<string, string> = {
+    brand: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><polyline points="7,12 9.5,12 11,8 13,16 14.5,12 17,12"/></svg>`,
+    surveillance: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>`,
+    globe: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`,
+    trend: `<svg ${ICON_ATTRS}><polyline points="3,17 9,11 13,15 21,7"/><polyline points="15,7 21,7 21,13"/></svg>`,
+    activity: `<svg ${ICON_ATTRS}><polyline points="2,12 6,12 9,5 14,19 17,12 22,12"/></svg>`,
+    bell: `<svg ${ICON_ATTRS}><path d="M6 8a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 14 6 8z"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
+    database: `<svg ${ICON_ATTRS}><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>`,
+    file: `<svg ${ICON_ATTRS}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>`,
+    book: `<svg ${ICON_ATTRS}><path d="M2 4h7a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-7a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h8z"/></svg>`,
+    settings: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+    help: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2-2.4 3.8"/><line x1="12" y1="17.5" x2="12" y2="17.5"/></svg>`,
+    search: `<svg ${ICON_ATTRS}><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16" y2="16"/></svg>`,
+    share: `<svg ${ICON_ATTRS}><circle cx="6" cy="12" r="2.5"/><circle cx="17.5" cy="5.5" r="2.5"/><circle cx="17.5" cy="18.5" r="2.5"/><line x1="8.2" y1="10.8" x2="15.3" y2="6.7"/><line x1="8.2" y1="13.2" x2="15.3" y2="17.3"/></svg>`,
+    download: `<svg ${ICON_ATTRS}><path d="M12 3v12"/><polyline points="7,10 12,15 17,10"/><path d="M4 20h16"/></svg>`,
+    filter: `<svg ${ICON_ATTRS}><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="1.8"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="1.8"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="18" r="1.8"/></svg>`,
+    menu: `<svg ${ICON_ATTRS}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`,
+    refresh: `<svg ${ICON_ATTRS}><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21,3 21,9 15,9"/></svg>`,
+    sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>`,
+    moon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`,
+    arrowRight: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg>`,
+  };
+
+  // ── Risk scoring ───────────────────────────────────────────────────────────
+  //
+  // There's no separate "risk model" on the backend — the risk score shown
+  // here is a transparent re-expression of the B3 z-score/severity spike
+  // detector already used for alerts. Each severity tier gets a base score;
+  // the magnitude of the anomaly (z-score, capped) nudges it within that
+  // tier. This keeps "risk" explainable in terms of a number that's already
+  // on screen elsewhere (the alert feed), rather than inventing a new metric.
+  const RISK_SEVERITY_BASE: Record<Severity, number> = {
+    LOW: 12, MEDIUM: 38, HIGH: 64, CRITICAL: 84,
+  };
+
+  function riskScoreFor(top: SpikeDetection | null): number {
+    if (!top) return 8;
+    const z = top.z_score >= 999 ? 5 : Math.max(0, top.z_score);
+    return Math.min(100, Math.round(RISK_SEVERITY_BASE[top.severity] + Math.min(12, z * 2)));
+  }
+
+  function riskLevelFor(score: number): RiskLevel {
+    if (score >= 80) return 'SEVERE';
+    if (score >= 60) return 'HIGH';
+    if (score >= 35) return 'MODERATE';
+    return 'LOW';
+  }
+
+  function topSpike(list: SpikeDetection[]): SpikeDetection | null {
+    if (list.length === 0) return null;
+    return list.reduce((max, s) => (s.z_score > max.z_score ? s : max), list[0]);
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────────
 
   let diseases: DiseaseInfo[] = [];
-  let summaryRows: SummaryRow[] = [];
-  let selectedDisease = 'covid_19';
-  let selectedRegion  = 'India';
-  let seriesData: OutbreakPoint[] = [];
-  let regions: string[] = [];
+  let countryEntries: CountryEntry[] = [];
+  let selectedCountry = 'India';
+  let selectedCountryDisease = 'covid_19';
+  let loadingData = true;
+  let lastUpdated: Date | null = null;
 
-  // Play state — controlled via dispatchAction on the ECharts dataZoom
-  let isPlaying = false;
-  let playTimer: ReturnType<typeof setInterval> | null = null;
+  // Map filters — both are real filters over countryEntries, not decoration.
+  let mapDiseaseFilter = 'all';
+  let mapRiskFilter: 'all' | RiskLevel = 'all';
 
-  // View toggle — 'timeseries' | 'hotspots'
-  let view: 'timeseries' | 'hotspots' = 'timeseries';
+  // Trends panel
+  let trendMetric: 'cases' | 'deaths' = 'cases';
 
-  // Hotspot clustering state
-  let epsKm: number = 2.0;
-  let minPts: number = 3;
-  let hotspotData: HotspotResponse = {
-    clusters: [], noise_points: [], eps_km: 2.0, min_pts: 3,
-    report_count: 0, cluster_count: 0,
-  };
+  // Search box (top bar) — jumps the map/selection to a matching country.
+  let searchQuery = '';
 
-  // Spike detection / alert feed state (B3)
-  let spikes: SpikeDetection[] = [];
+  // Spike detection / alert feed
   let alerts: AlertRow[] = [];
   let newAlertIds = new Set<number>();
   let scanning = false;
@@ -142,90 +226,147 @@
   let ws: WebSocket | null = null;
   let wsConnected = false;
 
-  // ECharts — browser-only; never touches SSR
-  let chartEl: HTMLDivElement;
-  let chart: any = null;
+  // ECharts instances — browser-only
   let echarts: any = null;
-  let hotspotChartEl: HTMLDivElement;
-  let hotspotChart: any = null;
+  let mapEl: HTMLDivElement;
+  let mapChart: any = null;
+  let worldMapReady = false;
+  let trendEl: HTMLDivElement;
+  let trendChart: any = null;
+  let countryEl: HTMLDivElement;
+  let countryChart: any = null;
 
-  // ── Data fetching ──────────────────────────────────────────────────────────
+  // ── Data loading ───────────────────────────────────────────────────────────
 
-  async function loadDiseases() {
-    const r = await fetch(`${API}/diseases`);
-    diseases = await r.json();
-    // Prefer covid_19 on first load; fall back to first disease returned.
-    if (!diseases.find(x => x.disease_name === selectedDisease)) {
-      selectedDisease = diseases[0]?.disease_name ?? selectedDisease;
+  async function loadAll() {
+    loadingData = true;
+    try {
+      const r = await fetch(`${API}/diseases`);
+      diseases = await r.json();
+
+      const combos: { disease: string; region: string }[] = [];
+      for (const d of diseases) for (const region of d.regions) combos.push({ disease: d.disease_name, region });
+
+      const fetched = await Promise.all(combos.map(async (c) => {
+        const [sr, zr] = await Promise.all([
+          fetch(`${API}/timeseries?disease=${encodeURIComponent(c.disease)}&region=${encodeURIComponent(c.region)}`),
+          fetch(`${API}/spikes?disease=${encodeURIComponent(c.disease)}&region=${encodeURIComponent(c.region)}`),
+        ]);
+        const series: OutbreakPoint[] = sr.ok ? await sr.json() : [];
+        const spikes: SpikeDetection[] = zr.ok ? await zr.json() : [];
+        const top = topSpike(spikes);
+        const last = series[series.length - 1] ?? null;
+        const prev = series[series.length - 2] ?? null;
+        const pctChange = (last && prev && prev.case_count > 0)
+          ? ((last.case_count - prev.case_count) / prev.case_count) * 100
+          : null;
+        const ds: DiseaseSeries = {
+          disease: c.disease,
+          series, spikes, topSpike: top,
+          latestCases: last?.case_count ?? 0,
+          latestDeaths: last?.deaths ?? 0,
+          pctChange,
+          riskScore: riskScoreFor(top),
+        };
+        return { region: c.region, ds };
+      }));
+
+      const byCountry = new Map<string, DiseaseSeries[]>();
+      for (const { region, ds } of fetched) {
+        if (!byCountry.has(region)) byCountry.set(region, []);
+        byCountry.get(region)!.push(ds);
+      }
+
+      countryEntries = Array.from(byCountry.entries()).map(([country, ds]) => {
+        const sorted = [...ds].sort((a, b) => b.riskScore - a.riskScore);
+        const primary = sorted[0];
+        return {
+          country,
+          geoName: COUNTRY_GEO_NAMES[country] ?? country,
+          diseases: [...ds].sort((a, b) => b.latestCases - a.latestCases),
+          primary,
+          riskScore: primary.riskScore,
+          riskLevel: riskLevelFor(primary.riskScore),
+          totalCases: ds.reduce((sum, d) => sum + d.latestCases, 0),
+          pctChange: primary.pctChange,
+          anomalyZ: primary.topSpike?.z_score ?? null,
+        };
+      }).sort((a, b) => b.riskScore - a.riskScore);
+
+      if (!countryEntries.find(c => c.country === selectedCountry)) {
+        selectedCountry = countryEntries[0]?.country ?? '';
+      }
+      lastUpdated = new Date();
+    } finally {
+      loadingData = false;
     }
-    const d = diseases.find(x => x.disease_name === selectedDisease);
-    if (d) {
-      regions = d.regions;
-      // Always set selectedRegion from the authoritative regions list.
-      // Prefer 'India' if it exists, otherwise take the first region.
-      // This must run unconditionally — never leave selectedRegion as an
-      // initial guess that the DOM's empty <select> may have already reset.
-      selectedRegion = regions.includes('India') ? 'India' : (regions[0] ?? '');
+  }
+
+  // ── Derived aggregates ─────────────────────────────────────────────────────
+
+  $: selectedEntry = countryEntries.find(c => c.country === selectedCountry) ?? null;
+
+  // Keep the country-detail disease selection valid as the country changes —
+  // default to that country's primary (highest-risk) disease.
+  $: if (selectedEntry && !selectedEntry.diseases.find(d => d.disease === selectedCountryDisease)) {
+    selectedCountryDisease = selectedEntry.primary.disease;
+  }
+  $: selectedDiseaseSeries = selectedEntry?.diseases.find(d => d.disease === selectedCountryDisease) ?? null;
+
+  $: allCombos = countryEntries.flatMap(c => c.diseases.map(d => ({ country: c.country, ...d })));
+
+  $: globalStats = {
+    countries: countryEntries.length,
+    activeOutbreaks: allCombos.filter(d => d.topSpike && (d.topSpike.severity === 'HIGH' || d.topSpike.severity === 'CRITICAL')).length,
+    highRisk: countryEntries.filter(c => c.riskLevel === 'HIGH' || c.riskLevel === 'SEVERE').length,
+    avgChange: (() => {
+      const vals = allCombos.map(d => d.pctChange).filter((v): v is number => v !== null);
+      if (!vals.length) return null;
+      return vals.reduce((a, b) => a + b, 0) / vals.length;
+    })(),
+    records: diseases.reduce((sum, d) => sum + d.total_records, 0),
+  };
+
+  $: topHotspots = [...allCombos]
+    .filter(d => d.topSpike)
+    .sort((a, b) => (b.topSpike!.z_score) - (a.topSpike!.z_score))
+    .slice(0, 5);
+
+  // Map data with the disease/risk filters applied — when a single disease
+  // is selected, each country's score/level reflect just that disease.
+  $: mapEntries = countryEntries
+    .map(c => {
+      if (mapDiseaseFilter === 'all') return { ...c, hasData: true };
+      const ds = c.diseases.find(d => d.disease === mapDiseaseFilter);
+      if (!ds) return { ...c, riskScore: 0, riskLevel: 'LOW' as RiskLevel, hasData: false };
+      return { ...c, riskScore: ds.riskScore, riskLevel: riskLevelFor(ds.riskScore), pctChange: ds.pctChange, anomalyZ: ds.topSpike?.z_score ?? null, hasData: true };
+    })
+    .filter(c => mapRiskFilter === 'all' || c.riskLevel === mapRiskFilter);
+
+  $: recommendedActions = selectedEntry ? buildRecommendedActions(selectedEntry) : [];
+
+  function buildRecommendedActions(entry: CountryEntry): string[] {
+    const actions: string[] = [];
+    for (const d of entry.diseases) {
+      if (d.topSpike && (d.topSpike.severity === 'HIGH' || d.topSpike.severity === 'CRITICAL')) {
+        actions.push(`Scale up ${diseaseLabel(d.disease).toLowerCase()} surveillance and case reporting in ${entry.country}`);
+      }
     }
+    const elevated = (name: string) => entry.diseases.find(d => d.disease === name && d.topSpike && d.topSpike.severity !== 'LOW');
+    if (elevated('dengue')) actions.push('Increase vector control in affected districts');
+    if (elevated('measles')) actions.push('Review immunization coverage and catch-up campaigns');
+    if (elevated('cholera')) actions.push('Audit water and sanitation infrastructure in hotspot areas');
+    if (actions.length === 0) actions.push(`Maintain routine monitoring for ${entry.country}`);
+    return actions.slice(0, 4);
   }
 
-  async function loadSummary() {
-    const r = await fetch(`${API}/summary`);
-    summaryRows = await r.json();
-  }
-
-  async function loadTimeSeries() {
-    if (!selectedDisease || !selectedRegion) return;
-    const url = `${API}/timeseries?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
-    const r = await fetch(url);
-    seriesData = await r.json();
-    await loadSpikes();
-    renderChart();
-  }
-
-  // ── Spike detection + alert feed (B3) ──────────────────────────────────────
-
-  // Read-only preview of the z-score detector for the current series — used
-  // to mark spikes on the chart.  No alerts are created by this call.
-  async function loadSpikes() {
-    if (!selectedDisease || !selectedRegion) { spikes = []; return; }
-    const url = `${API}/spikes?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
-    const r = await fetch(url);
-    spikes = r.ok ? await r.json() : [];
-  }
+  // ── Alerts + live feed ──────────────────────────────────────────────────────
 
   async function loadAlerts() {
     const r = await fetch('http://localhost:8000/alerts?limit=30');
     if (r.ok) alerts = await r.json();
   }
 
-  // Runs the detector, persists severity-tiered alerts, and emits
-  // AlertGenerated for any new ones (also picked up live via the WebSocket).
-  async function scanForSpikes() {
-    if (!selectedDisease || !selectedRegion || scanning) return;
-    scanning = true;
-    scanMessage = null;
-    try {
-      const url = `${API}/scan?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
-      const r = await fetch(url, { method: 'POST' });
-      if (!r.ok) {
-        scanMessage = 'scan failed';
-        return;
-      }
-      const body: ScanResponse = await r.json();
-      scanMessage = `${body.detections.length} detection(s) · ${body.new_alerts.length} new alert(s)`;
-      for (const a of body.new_alerts) {
-        addAlert(a);
-      }
-      await loadSpikes();
-      renderChart();
-    } finally {
-      scanning = false;
-    }
-  }
-
-  // Insert a new alert at the top of the feed (deduped by id) and trigger
-  // its severity-pulse animation.
   function addAlert(a: AlertRow) {
     if (alerts.find(x => x.id === a.id)) return;
     alerts = [a, ...alerts].slice(0, 50);
@@ -236,8 +377,6 @@
       newAlertIds = newAlertIds;
     }, 2200);
   }
-
-  // ── Live feed WebSocket ───────────────────────────────────────────────────
 
   function connectWs() {
     ws = new WebSocket('ws://localhost:8000/ws');
@@ -267,10 +406,43 @@
     };
   }
 
-  // SENTINEL_Z (999) means "far above baseline, std==0" — show as ">5σ"
-  // rather than the raw sentinel number.
+  // Re-runs the detector for the selected country's primary disease, then
+  // refreshes the whole aggregate (small dataset — a full reload is cheap
+  // and guarantees every panel reflects the new detections).
+  async function scanSelected() {
+    if (!selectedEntry || scanning) return;
+    scanning = true;
+    scanMessage = null;
+    try {
+      const { country, primary } = selectedEntry;
+      const url = `${API}/scan?disease=${encodeURIComponent(primary.disease)}&region=${encodeURIComponent(country)}`;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) { scanMessage = 'scan failed'; return; }
+      const body: ScanResponse = await r.json();
+      scanMessage = `${body.detections.length} detection(s) · ${body.new_alerts.length} new alert(s)`;
+      for (const a of body.new_alerts) addAlert(a);
+      await loadAll();
+    } finally {
+      scanning = false;
+    }
+  }
+
+  // ── Formatting helpers ─────────────────────────────────────────────────────
+
+  function fmt(n: number): string {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return n.toLocaleString();
+  }
+
+  function fmtPct(n: number | null): string {
+    if (n === null) return '—';
+    return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+  }
+
   function formatZ(z: number | null): string {
-    if (z === null) return '';
+    if (z === null) return '—';
     if (z >= 999) return '>5σ';
     return `${z.toFixed(2)}σ`;
   }
@@ -285,71 +457,295 @@
     return `${Math.floor(hrs / 24)}d ago`;
   }
 
-  // ── ECharts rendering ──────────────────────────────────────────────────────
-  //
-  // Why onMount + browser guard?  ECharts is a browser-only library — it reads
-  // the DOM immediately on import.  SvelteKit prerenders pages on the server
-  // (SSR), so any top-level ECharts import would crash node.  The pattern:
-  //   1. import('echarts') inside onMount() — deferred to browser execution
-  //   2. guard with `if (browser)` — belt-and-suspenders for SSR safety
-  //
-  // Why dispatchAction for the play control rather than rebuilding the option?
-  // dispatchAction({ type: 'dataZoom', endValue: ... }) updates the visible
-  // window without re-diffing the entire option tree, so the animation is
-  // smooth at 100ms steps.
+  function diseaseLabel(slug: string): string {
+    return DISEASE_LABELS[slug] ?? slug;
+  }
 
-  function renderChart() {
-    if (!chart || !echarts || seriesData.length === 0) return;
+  function diseaseColor(slug: string): string {
+    return DISEASE_COLORS[slug] ?? '#94a3b8';
+  }
 
-    stopPlay();
+  function riskColor(level: string): string {
+    return RISK_COLORS[level as RiskLevel] ?? '#94a3b8';
+  }
 
-    const color = DISEASE_COLORS[selectedDisease] ?? '#94a3b8';
-    const label = DISEASE_LABELS[selectedDisease] ?? selectedDisease;
+  // Tiny inline-SVG sparkline path for the active-diseases table — last 12
+  // points of case_count, normalized to a 64x24 box.
+  function sparklinePath(series: OutbreakPoint[], w = 64, h = 24): string {
+    const vals = series.slice(-12).map(p => p.case_count);
+    if (vals.length < 2) return '';
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    return vals.map((v, i) => {
+      const x = (i / (vals.length - 1)) * w;
+      const y = h - ((v - min) / range) * (h - 2) - 1;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  }
 
-    const data = seriesData.map(p => [p.date, p.case_count]);
-    const deathData = seriesData.map(p => [p.date, p.deaths]);
+  function selectCountry(country: string) {
+    if (!countryEntries.find(c => c.country === country)) return;
+    selectedCountry = country;
+  }
 
-    chart.setOption({
+  function handleSearch(e: KeyboardEvent) {
+    if (e.key !== 'Enter') return;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return;
+    const match = countryEntries.find(c => c.country.toLowerCase().includes(q))
+      ?? countryEntries.find(c => c.diseases.some(d => diseaseLabel(d.disease).toLowerCase().includes(q)));
+    if (match) selectedCountry = match.country;
+  }
+
+  // ── ECharts ────────────────────────────────────────────────────────────────
+
+  function chartPalette() {
+    const dark = $theme !== 'light';
+    return {
+      text:          dark ? '#e6e8ee' : '#171a21',
+      muted:         dark ? '#8b94a7' : '#5b6472',
+      grid:          dark ? '#222838' : '#e7e9ee',
+      axis:          dark ? '#2a3142' : '#dde1e8',
+      tooltipBg:     dark ? '#161b28' : '#ffffff',
+      tooltipBorder: dark ? '#2a3142' : '#dde1e8',
+      bg:            dark ? '#0c0f17' : '#f5f6f8',
+      noData:        dark ? '#1a1f2c' : '#e7e9ee',
+      hover:         dark ? '#2a3142' : '#dde1e8',
+      border:        dark ? '#222838' : '#e7e9ee',
+    };
+  }
+
+  function spikeMarkPoint(s: SpikeDetection, pal: ReturnType<typeof chartPalette>) {
+    return {
+      name: s.severity,
+      coord: [s.date, s.value],
+      symbolSize: SEVERITY_MARK_SIZE[s.severity] ?? 7,
+      itemStyle: {
+        color: SEVERITY_COLORS[s.severity] ?? '#94a3b8',
+        borderColor: pal.bg,
+        borderWidth: 1.5,
+      },
+      label: { show: false },
+    };
+  }
+
+  function spikeTooltip(spikes: SpikeDetection[]) {
+    return (params: any): string => {
+      const s = spikes.find(sp => sp.date === params.data.coord[0] && sp.value === params.data.coord[1]);
+      if (!s) return params.name;
+      return `<div style="font-weight:700;color:${SEVERITY_COLORS[s.severity]};margin-bottom:4px">`
+        + `${formatZ(s.z_score)} · ${s.severity}</div>`
+        + `${s.value.toLocaleString()} on ${s.date} (baseline μ ${Math.round(s.rolling_mean).toLocaleString()})`;
+    };
+  }
+
+  // CRITICAL anomalies ripple continuously on a chart — same convention as
+  // the live alert feed's "CRITICAL pulses, LOW doesn't".
+  function criticalRippleSeries(list: SpikeDetection[]) {
+    return {
+      name: 'critical-pulse',
+      type: 'effectScatter',
+      coordinateSystem: 'cartesian2d',
+      silent: true,
+      tooltip: { show: false },
+      symbolSize: 9,
+      rippleEffect: { brushType: 'stroke', scale: 3.5, period: 3 },
+      itemStyle: { color: SEVERITY_COLORS.CRITICAL },
+      data: list.filter(s => s.severity === 'CRITICAL').map(s => [s.date, s.value]),
+      z: 5,
+    };
+  }
+
+  // A handful of features in the bundled world-atlas topology (Russia,
+  // Fiji, Antarctica) have rings that cross the +/-180 degree antimeridian.
+  // Plotted directly on an equirectangular map, the segment that "jumps"
+  // from one edge of the map to the other renders as a long stray line
+  // across the whole map. Split each ring at antimeridian crossings into
+  // fragments that each close along a single edge instead.
+  function splitAntimeridian(ring: number[][]): number[][][] {
+    const fragments: number[][][] = [];
+    let current: number[][] = [ring[0]];
+    for (let i = 1; i < ring.length; i++) {
+      const prev = ring[i - 1];
+      const pt = ring[i];
+      const dLon = pt[0] - prev[0];
+      if (dLon > 180 || dLon < -180) {
+        const endLon = dLon > 180 ? -180 : 180;
+        const startLon = -endLon;
+        const ptCont = dLon > 180 ? pt[0] - 360 : pt[0] + 360;
+        const t = (endLon - prev[0]) / (ptCont - prev[0]);
+        const lat = prev[1] + t * (pt[1] - prev[1]);
+        current.push([endLon, lat]);
+        fragments.push(current);
+        current = [[startLon, lat]];
+      }
+      current.push(pt);
+    }
+    fragments.push(current);
+    if (fragments.length > 1) {
+      const first = fragments.shift()!;
+      const last = fragments.pop()!;
+      fragments.push(last.concat(first.slice(1)));
+    }
+    return fragments.filter((f) => f.length >= 3);
+  }
+
+  function ringCrossesAntimeridian(ring: number[][]): boolean {
+    return ring.some((pt, i) => i > 0 && Math.abs(pt[0] - ring[i - 1][0]) > 180);
+  }
+
+  function fixAntimeridian(geo: any) {
+    for (const f of geo.features) {
+      const geom = f.geometry;
+      if (!geom) continue;
+      if (geom.type === 'Polygon') {
+        const rings: number[][][] = geom.coordinates;
+        if (!rings.some(ringCrossesAntimeridian)) continue;
+        geom.type = 'MultiPolygon';
+        geom.coordinates = rings.flatMap((r) => splitAntimeridian(r).map((frag) => [frag]));
+      } else if (geom.type === 'MultiPolygon') {
+        const polys: number[][][][] = geom.coordinates;
+        const out: number[][][][] = [];
+        for (const poly of polys) {
+          if (!poly.some(ringCrossesAntimeridian)) {
+            out.push(poly);
+            continue;
+          }
+          for (const r of poly) {
+            for (const frag of splitAntimeridian(r)) out.push([frag]);
+          }
+        }
+        geom.coordinates = out;
+      }
+    }
+  }
+
+  // Loads the world GeoJSON (converted from the bundled world-atlas
+  // TopoJSON) and registers it once with ECharts.
+  async function loadWorldMap() {
+    const [topojson, topoRes] = await Promise.all([
+      import('topojson-client'),
+      fetch('/world-110m.json'),
+    ]);
+    const topo = await topoRes.json();
+    const geo = topojson.feature(topo, topo.objects.countries as any);
+    fixAntimeridian(geo as any);
+    echarts.registerMap('world', geo as any);
+    worldMapReady = true;
+  }
+
+  function renderMapChart() {
+    if (!mapChart || !echarts || !worldMapReady) return;
+    const pal = chartPalette();
+    const data = mapEntries.map(c => ({
+      name: c.geoName,
+      value: c.riskScore,
+      countryMeta: c,
+      itemStyle: {
+        areaColor: c.hasData ? RISK_COLORS[c.riskLevel] : pal.noData,
+        opacity: c.hasData ? 0.78 : 1,
+        borderColor: c.country === selectedCountry ? pal.text : pal.border,
+        borderWidth: c.country === selectedCountry ? 1.5 : 0.5,
+      },
+    }));
+    mapChart.setOption({
       backgroundColor: 'transparent',
-      animation: true,
-      animationDuration: 600,
-      grid: { top: 60, right: 24, bottom: 90, left: 72, containLabel: false },
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: pal.tooltipBg,
+        borderColor: pal.tooltipBorder,
+        textStyle: { color: pal.text, fontSize: 12, fontFamily: 'var(--sans)' },
+        formatter: (params: any) => {
+          const meta = params.data?.countryMeta as (CountryEntry & { hasData: boolean }) | undefined;
+          if (!meta || !meta.hasData) return params.name;
+          const lines = [
+            `<div style="font-weight:600;margin-bottom:4px;font-family:var(--sans)">${meta.country}</div>`,
+            `<div style="color:${RISK_COLORS[meta.riskLevel]};margin-bottom:4px">${RISK_LABELS[meta.riskLevel]} risk · ${meta.riskScore}/100</div>`,
+            `Latest cases: <strong>${meta.totalCases.toLocaleString()}</strong>`,
+          ];
+          if (meta.pctChange !== null) lines.push(`<br/>Change: ${fmtPct(meta.pctChange)}`);
+          if (meta.anomalyZ !== null) lines.push(`<br/>Anomaly: ${formatZ(meta.anomalyZ)}`);
+          return lines.join('');
+        },
+      },
+      series: [{
+        type: 'map',
+        map: 'world',
+        roam: true,
+        zoom: 1.15,
+        scaleLimit: { min: 1, max: 6 },
+        itemStyle: { areaColor: pal.noData, borderColor: pal.border, borderWidth: 0.5 },
+        emphasis: { itemStyle: { areaColor: pal.hover }, label: { show: false } },
+        select: { disabled: true },
+        label: { show: false },
+        data,
+      }],
+    }, true);
+  }
+
+  function renderTrendChart() {
+    if (!trendChart || !echarts || !selectedEntry) return;
+    const pal = chartPalette();
+    const field: keyof OutbreakPoint = trendMetric === 'cases' ? 'case_count' : 'deaths';
+
+    const series = selectedEntry.diseases.map(d => ({
+      name: diseaseLabel(d.disease),
+      type: 'line',
+      data: d.series.map(p => [p.date, p[field]]),
+      smooth: 0.4,
+      symbol: 'none',
+      lineStyle: { color: diseaseColor(d.disease), width: 2 },
+      emphasis: { focus: 'series' },
+      markPoint: trendMetric === 'cases' ? {
+        symbol: 'circle',
+        data: d.spikes.map(s => spikeMarkPoint(s, pal)),
+        tooltip: { formatter: spikeTooltip(d.spikes) },
+      } : undefined,
+    }));
+
+    const ripples = trendMetric === 'cases'
+      ? selectedEntry.diseases.map(d => criticalRippleSeries(d.spikes))
+      : [];
+
+    trendChart.setOption({
+      backgroundColor: 'transparent',
+      animationDurationUpdate: 450,
+      grid: { top: 40, right: 16, bottom: 32, left: 56, containLabel: false },
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#e2e8f0', fontSize: 12 },
+        backgroundColor: pal.tooltipBg,
+        borderColor: pal.tooltipBorder,
+        textStyle: { color: pal.text, fontSize: 12, fontFamily: 'var(--sans)' },
         formatter: (params: any[]) => {
-          const date = params[0].axisValue;
-          let html = `<div style="margin-bottom:4px;color:#94a3b8;font-size:11px">${date}</div>`;
+          const date = params[0]?.axisValue ?? '';
+          let html = `<div style="margin-bottom:4px;color:${pal.muted};font-size:11px">${date}</div>`;
           for (const p of params) {
-            const val = Number(p.value[1]).toLocaleString();
-            html += `<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.color};margin-right:6px"></span>${p.seriesName}: <strong>${val}</strong></div>`;
+            if (p.seriesName === 'critical-pulse') continue;
+            const val = Number(p.value?.[1] ?? 0).toLocaleString();
+            html += `<div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${p.color};margin-right:6px"></span>${p.seriesName}: <strong>${val}</strong></div>`;
           }
           return html;
         },
       },
       legend: {
-        top: 8,
-        right: 24,
-        textStyle: { color: '#94a3b8', fontSize: 11 },
-        itemWidth: 14,
-        itemHeight: 8,
+        top: 0, right: 0,
+        textStyle: { color: pal.muted, fontSize: 11, fontFamily: 'var(--sans)' },
+        itemWidth: 14, itemHeight: 8,
       },
       xAxis: {
         type: 'time',
-        axisLine: { lineStyle: { color: '#30363d' } },
+        axisLine: { lineStyle: { color: pal.axis } },
         splitLine: { show: false },
-        axisLabel: { color: '#6b7280', fontSize: 11 },
-        axisTick: { lineStyle: { color: '#30363d' } },
+        axisLabel: { color: pal.muted, fontSize: 11, fontFamily: 'var(--sans)' },
+        axisTick: { lineStyle: { color: pal.axis } },
       },
       yAxis: {
         type: 'value',
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: '#1c2128', type: 'dashed' } },
+        splitLine: { lineStyle: { color: pal.grid, type: 'dashed' } },
         axisLabel: {
-          color: '#6b7280',
-          fontSize: 11,
+          color: pal.muted, fontSize: 11, fontFamily: 'var(--mono)',
           formatter: (v: number) => {
             if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
             if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
@@ -357,268 +753,120 @@
           },
         },
       },
-      dataZoom: [
-        {
-          type: 'slider',
-          bottom: 10,
-          height: 22,
-          borderColor: '#30363d',
-          backgroundColor: '#0d1117',
-          dataBackground: {
-            lineStyle: { color: color, opacity: 0.3 },
-            areaStyle: { color: color, opacity: 0.08 },
-          },
-          selectedDataBackground: {
-            lineStyle: { color: color, opacity: 0.6 },
-            areaStyle: { color: color, opacity: 0.2 },
-          },
-          fillerColor: 'rgba(255,255,255,0.04)',
-          handleStyle: { color: color },
-          moveHandleStyle: { color: color },
-          textStyle: { color: '#6b7280', fontSize: 10 },
-          // Start playing from the first 20% of the data window
-          start: 0,
-          end: 20,
+      series: [...series, ...ripples],
+    }, true);
+  }
+
+  function renderCountryChart() {
+    if (!countryChart || !echarts || !selectedDiseaseSeries) return;
+    const pal = chartPalette();
+    const ds = selectedDiseaseSeries;
+    const color = diseaseColor(ds.disease);
+
+    countryChart.setOption({
+      backgroundColor: 'transparent',
+      animationDurationUpdate: 450,
+      grid: { top: 16, right: 12, bottom: 28, left: 48, containLabel: false },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: pal.tooltipBg,
+        borderColor: pal.tooltipBorder,
+        textStyle: { color: pal.text, fontSize: 12, fontFamily: 'var(--sans)' },
+        formatter: (params: any[]) => {
+          const p = params[0];
+          if (!p) return '';
+          return `<div style="color:${pal.muted};font-size:11px;margin-bottom:2px">${p.axisValue}</div>${Number(p.value[1]).toLocaleString()} cases`;
         },
-        { type: 'inside', zoomOnMouseWheel: true, moveOnMouseMove: true },
-      ],
+      },
+      xAxis: {
+        type: 'time',
+        axisLine: { lineStyle: { color: pal.axis } },
+        splitLine: { show: false },
+        axisLabel: { color: pal.muted, fontSize: 10, fontFamily: 'var(--sans)' },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        axisLine: { show: false },
+        splitLine: { lineStyle: { color: pal.grid, type: 'dashed' } },
+        axisLabel: {
+          color: pal.muted, fontSize: 10, fontFamily: 'var(--mono)',
+          formatter: (v: number) => {
+            if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+            if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+            return String(v);
+          },
+        },
+      },
       series: [
         {
-          name: `${label} — cases`,
           type: 'line',
-          data,
+          data: ds.series.map(p => [p.date, p.case_count]),
           smooth: 0.4,
           symbol: 'none',
           lineStyle: { color, width: 2 },
           areaStyle: {
             color: echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: color + 'cc' },
-              { offset: 1, color: color + '08' },
+              { offset: 0, color: color + 'aa' },
+              { offset: 1, color: color + '05' },
             ]),
           },
-          emphasis: { disabled: true },
-          // B3: severity-colored markers on detected spike dates — the
-          // detection made visible against the curve that triggered it.
           markPoint: {
             symbol: 'circle',
-            data: spikes.map(s => ({
-              name: s.severity,
-              coord: [s.date, s.value],
-              symbolSize: SEVERITY_MARK_SIZE[s.severity] ?? 8,
-              itemStyle: {
-                color: SEVERITY_COLORS[s.severity] ?? '#94a3b8',
-                borderColor: '#0d1117',
-                borderWidth: 1.5,
-              },
-              label: { show: false },
-            })),
-            tooltip: {
-              formatter: (params: any) => {
-                const s: SpikeDetection | undefined = spikes.find(
-                  sp => sp.date === params.data.coord[0] && sp.value === params.data.coord[1]
-                );
-                if (!s) return params.name;
-                return `<div style="color:${SEVERITY_COLORS[s.severity]};font-weight:700;margin-bottom:4px">${s.severity} spike</div>`
-                  + `${s.date}<br/>cases: <strong>${s.value.toLocaleString()}</strong><br/>`
-                  + `z-score: <strong>${s.z_score.toFixed(2)}</strong> (baseline μ=${s.rolling_mean.toLocaleString()}, σ=${s.rolling_std.toLocaleString()})`;
-              },
-            },
+            data: ds.spikes.map(s => spikeMarkPoint(s, pal)),
+            tooltip: { formatter: spikeTooltip(ds.spikes) },
           },
         },
-        {
-          name: `${label} — deaths`,
-          type: 'line',
-          data: deathData,
-          smooth: 0.4,
-          symbol: 'none',
-          lineStyle: { color: '#ef4444', width: 1.5, type: 'dashed' },
-          areaStyle: { color: 'transparent' },
-          emphasis: { disabled: true },
-        },
-      ],
-    }, true); // true = merge=false (full replace keeps things clean)
-  }
-
-  // ── Play control ──────────────────────────────────────────────────────────
-  //
-  // Advances the dataZoom end value by ~2% every 120ms.  This creates the
-  // "OWID play through time" feel: the chart reveals data progressively.
-  // The scrubber also updates so the user can see progress at a glance.
-
-  function togglePlay() {
-    isPlaying ? stopPlay() : startPlay();
-  }
-
-  function startPlay() {
-    if (!chart) return;
-    isPlaying = true;
-    playTimer = setInterval(() => {
-      const opt = chart.getOption() as any;
-      const dz = opt.dataZoom?.[0];
-      if (!dz) return;
-      const currentEnd = dz.end as number;
-      if (currentEnd >= 100) {
-        // Wrap back to start for loop effect
-        chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 20 });
-        return;
-      }
-      const newEnd = Math.min(100, currentEnd + 2);
-      chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, end: newEnd });
-    }, 120);
-  }
-
-  function stopPlay() {
-    if (playTimer !== null) {
-      clearInterval(playTimer);
-      playTimer = null;
-    }
-    isPlaying = false;
-  }
-
-  // ── Reactivity ────────────────────────────────────────────────────────────
-
-  function onDiseaseChange() {
-    stopPlay();
-    const d = diseases.find(x => x.disease_name === selectedDisease);
-    regions = d?.regions ?? [];
-    // Same preference as initial load: keep India when available.
-    selectedRegion = regions.includes('India') ? 'India' : (regions[0] ?? '');
-    loadTimeSeries();
-  }
-
-  // Named handler so the TypeScript cast stays in the <script> block —
-  // Svelte's template parser does not process TS syntax in inline expressions.
-  function handleRegionChange(e: Event) {
-    selectedRegion = (e.currentTarget as HTMLSelectElement).value;
-    onRegionChange();
-  }
-
-  function onRegionChange() {
-    stopPlay();
-    loadTimeSeries();
-  }
-
-  // ── Hotspot map ───────────────────────────────────────────────────────────
-
-  async function loadHotspots() {
-    const disease = selectedDisease ? `&disease=${encodeURIComponent(selectedDisease)}` : '';
-    const url = `${API}/hotspots?eps_km=${epsKm}&min_pts=${minPts}${disease}`;
-    const r = await fetch(url);
-    hotspotData = await r.json();
-    renderHotspotChart();
-  }
-
-  function renderHotspotChart() {
-    if (!hotspotChart || !echarts) return;
-    const { clusters, noise_points } = hotspotData;
-    const color = DISEASE_COLORS[selectedDisease] ?? '#f59e0b';
-
-    // Scale circle size by sqrt(total_cases) so large clusters are visible
-    // but don't eclipse the whole map.
-    const maxCases = Math.max(1, ...clusters.map(c => c.total_cases));
-    const scale = (cases: number) => Math.max(8, Math.sqrt(cases / maxCases) * 60);
-
-    hotspotChart.setOption({
-      backgroundColor: 'transparent',
-      animation: true,
-      animationDuration: 500,
-      grid: { top: 30, right: 20, bottom: 50, left: 60, containLabel: true },
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: '#1c2128',
-        borderColor: '#30363d',
-        textStyle: { color: '#e2e8f0', fontSize: 12 },
-        formatter: (params: any) => {
-          const v = params.value as number[];
-          if (params.seriesName === 'noise') {
-            return `<div style="color:#4b5563;font-size:11px;margin-bottom:4px">Isolated report (noise)</div>`
-              + `Cases: <strong>${v[2].toLocaleString()}</strong><br/>`
-              + `Lat: ${v[1].toFixed(4)} · Lon: ${v[0].toFixed(4)}`;
-          }
-          return `<div style="color:${color};font-size:11px;margin-bottom:4px">Hotspot cluster</div>`
-            + `<strong>${v[3]} reports → 1 cluster</strong><br/>`
-            + `Total cases: <strong>${v[2].toLocaleString()}</strong><br/>`
-            + `Radius: ${v[4]} km`;
-        },
-      },
-      xAxis: {
-        name: 'Longitude',
-        nameTextStyle: { color: '#4b5563', fontSize: 10 },
-        type: 'value',
-        min: 72.75,
-        max: 73.40,
-        axisLine: { lineStyle: { color: '#30363d' } },
-        splitLine: { lineStyle: { color: '#1c2128' } },
-        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
-      },
-      yAxis: {
-        name: 'Latitude',
-        nameTextStyle: { color: '#4b5563', fontSize: 10 },
-        type: 'value',
-        min: 18.60,
-        max: 19.50,
-        axisLine: { lineStyle: { color: '#30363d' } },
-        splitLine: { lineStyle: { color: '#1c2128' } },
-        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v: number) => v.toFixed(2) },
-      },
-      series: [
-        {
-          name: 'cluster',
-          type: 'scatter',
-          data: clusters.map(c => [c.centroid_lon, c.centroid_lat, c.total_cases, c.report_count, c.radius_km]),
-          symbolSize: (val: number[]) => scale(val[2]),
-          itemStyle: { color, opacity: 0.55, borderColor: color, borderWidth: 1 },
-          emphasis: { itemStyle: { opacity: 0.85 } },
-          zlevel: 2,
-        },
-        {
-          name: 'noise',
-          type: 'scatter',
-          symbol: 'diamond',
-          data: noise_points.map(n => [n.centroid_lon, n.centroid_lat, n.total_cases]),
-          symbolSize: 9,
-          itemStyle: { color: '#374151', opacity: 0.9, borderColor: '#6b7280', borderWidth: 1 },
-          emphasis: { itemStyle: { opacity: 1 } },
-          zlevel: 3,
-        },
+        criticalRippleSeries(ds.spikes),
       ],
     }, true);
   }
 
-  async function handleViewChange(newView: 'timeseries' | 'hotspots') {
-    if (newView === view) return;
-    view = newView;
-    await tick();
-    if (newView === 'hotspots') {
-      hotspotChart?.dispose();
-      hotspotChart = echarts.init(hotspotChartEl, null, { renderer: 'canvas' });
-      await loadHotspots();
-    } else {
-      chart?.resize();
-    }
+  // ── Reactivity ────────────────────────────────────────────────────────────
+
+  $: if (mapChart && echarts && worldMapReady) {
+    mapEntries; selectedCountry; $theme;
+    renderMapChart();
+  }
+  $: if (trendChart && echarts && selectedEntry) {
+    trendMetric; $theme;
+    renderTrendChart();
+  }
+  $: if (countryChart && echarts && selectedDiseaseSeries) {
+    $theme;
+    renderCountryChart();
+  }
+
+  // The country-detail chart only mounts once a country is selected (its
+  // container lives inside an {#if selectedEntry} block), so it's
+  // initialized lazily here rather than alongside the other charts.
+  $: if (browser && echarts && countryEl && !countryChart) {
+    countryChart = echarts.init(countryEl, null, { renderer: 'canvas' });
+    renderCountryChart();
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  // onMount must be synchronous to return a cleanup function that TypeScript
-  // and Svelte both accept.  Async work runs in an IIFE so the cleanup can
-  // be returned immediately without wrapping in a Promise.
   onMount(() => {
     if (!browser) return;
 
-    const resize = () => { chart?.resize(); hotspotChart?.resize(); };
+    const resize = () => { mapChart?.resize(); trendChart?.resize(); countryChart?.resize(); };
     window.addEventListener('resize', resize);
 
-    // Deferred import — keeps ECharts out of SSR entirely (ssr=false in
-    // +page.ts also prevents SSR, but the guard is belt-and-suspenders).
     (async () => {
       echarts = await import('echarts');
-      chart = echarts.init(chartEl, null, { renderer: 'canvas' });
-      await Promise.all([loadDiseases(), loadSummary(), loadAlerts()]);
-      // tick() flushes Svelte's pending DOM updates — specifically the <select>
-      // options re-render — before loadTimeSeries() reads selectedRegion.
+      mapChart = echarts.init(mapEl, null, { renderer: 'canvas' });
+      trendChart = echarts.init(trendEl, null, { renderer: 'canvas' });
+
+      mapChart.on('click', (params: any) => {
+        const meta = params.data?.countryMeta;
+        if (meta?.hasData) selectedCountry = meta.country;
+      });
+
+      await Promise.all([loadAll(), loadAlerts(), loadWorldMap()]);
       await tick();
-      await loadTimeSeries();
+      renderMapChart();
+      renderTrendChart();
     })();
 
     connectWs();
@@ -627,646 +875,1018 @@
   });
 
   onDestroy(() => {
-    stopPlay();
-    chart?.dispose();
-    hotspotChart?.dispose();
+    mapChart?.dispose();
+    trendChart?.dispose();
+    countryChart?.dispose();
     ws?.close();
   });
-
-  // ── Formatting helpers ────────────────────────────────────────────────────
-
-  function fmt(n: number): string {
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return n.toLocaleString();
-  }
-
-  function diseaseLabel(slug: string): string {
-    return DISEASE_LABELS[slug] ?? slug;
-  }
-
-  function diseaseColor(slug: string): string {
-    return DISEASE_COLORS[slug] ?? '#94a3b8';
-  }
 </script>
 
-<!-- ── Layout ──────────────────────────────────────────────────────────────── -->
+<div class="shell">
 
-<div class="page">
+  <!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-mark">{@html ICONS.brand}</span>
+      <div>
+        <div class="brand-name">EpiWatch</div>
+        <div class="brand-section">Surveillance</div>
+      </div>
+    </div>
 
-  <!-- header nav -->
-  <header class="topbar">
-    <div class="brand">EpiWatch <span class="pill">Surveillance</span></div>
-    <nav>
-      <a href="/">Live Feed</a>
-      <span class="active">Outbreak History</span>
+    <nav class="sidebar-nav">
+      <a href="/surveillance" class="nav-item active">{@html ICONS.surveillance}<span>Surveillance</span></a>
+      <span class="nav-item inert">{@html ICONS.globe}<span>Global Map</span></span>
+      <span class="nav-item inert">{@html ICONS.trend}<span>Trends</span></span>
+      <span class="nav-item inert">{@html ICONS.activity}<span>Diseases</span></span>
+      <span class="nav-item inert">
+        {@html ICONS.bell}<span>Alerts</span>
+        {#if alerts.length}<span class="nav-badge">{alerts.length}</span>{/if}
+      </span>
+      <span class="nav-item inert">{@html ICONS.database}<span>Data Explorer</span></span>
+      <span class="nav-item inert">{@html ICONS.file}<span>Reports</span></span>
+      <span class="nav-item inert">{@html ICONS.book}<span>Resources</span></span>
     </nav>
-  </header>
 
-  <!-- main content: two-column command-center layout -->
-  <div class="layout">
+    <div class="sidebar-bottom">
+      <span class="nav-item inert">{@html ICONS.settings}<span>Settings</span></span>
+      <button class="nav-item theme-item" on:click={toggleTheme}>
+        {@html $theme === 'light' ? ICONS.moon : ICONS.sun}
+        <span>{$theme === 'light' ? 'Dark mode' : 'Light mode'}</span>
+      </button>
+      <span class="nav-item inert">{@html ICONS.help}<span>Help</span></span>
+    </div>
+  </aside>
 
-    <!-- LEFT: controls + stat cards -->
-    <aside class="sidebar">
-      <section class="controls">
-        <!-- View toggle -->
-        <div class="view-toggle">
-          <button
-            class="vtab {view === 'timeseries' ? 'active' : ''}"
-            on:click={() => handleViewChange('timeseries')}
-          >Time Series</button>
-          <button
-            class="vtab {view === 'hotspots' ? 'active' : ''}"
-            on:click={() => handleViewChange('hotspots')}
-          >Hotspot Map</button>
+  <!-- ── Main column ───────────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <header class="topbar">
+      <button class="icon-btn menu-btn" aria-label="Menu">{@html ICONS.menu}</button>
+      <div class="search-box">
+        {@html ICONS.search}
+        <input
+          type="text"
+          placeholder="Search disease, country, or region…"
+          bind:value={searchQuery}
+          on:keydown={handleSearch}
+        />
+        <span class="kbd">↵</span>
+      </div>
+      <div class="topbar-right">
+        <div class="data-updated">
+          <span class="ws-dot {wsConnected ? 'connected' : ''}"></span>
+          Data updated {lastUpdated ? timeAgo(lastUpdated.toISOString()) : '—'}
+        </div>
+        <button class="topbar-btn">{@html ICONS.share}<span>Share</span></button>
+        <button class="topbar-btn">{@html ICONS.download}<span>Download</span></button>
+        <button class="topbar-btn">{@html ICONS.filter}<span>Filters</span></button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="content-main">
+
+        <div class="tabs">
+          <span class="tab active">Overview</span>
+          <span class="tab inert">Trends</span>
+          <span class="tab inert">Diseases</span>
+          <span class="tab inert">Alerts</span>
+          <span class="tab inert">Reports</span>
         </div>
 
-        <label class="field-label mt">Disease</label>
-        <div class="disease-list">
-          {#each diseases as d}
-            <button
-              class="disease-btn {selectedDisease === d.disease_name ? 'active' : ''}"
-              style="--accent: {diseaseColor(d.disease_name)}"
-              on:click={() => {
-                selectedDisease = d.disease_name;
-                if (view === 'timeseries') onDiseaseChange();
-                else loadHotspots();
-              }}
-            >
-              <span class="dot" style="background: {diseaseColor(d.disease_name)}"></span>
-              {diseaseLabel(d.disease_name)}
-            </button>
-          {/each}
-        </div>
+        <!-- Global Risk Map -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Global Risk Map</h2>
+            <div class="panel-controls">
+              <select class="quiet-select" bind:value={mapDiseaseFilter}>
+                <option value="all">All Diseases</option>
+                {#each diseases as d}
+                  <option value={d.disease_name}>{diseaseLabel(d.disease_name)}</option>
+                {/each}
+              </select>
+              <select class="quiet-select" bind:value={mapRiskFilter}>
+                <option value="all">All Risk Levels</option>
+                {#each Object.entries(RISK_LABELS) as [lvl, label]}
+                  <option value={lvl}>{label}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
 
-        {#if view === 'timeseries'}
-          <label class="field-label mt">Region</label>
-          <select on:change={handleRegionChange} class="select">
-            {#each regions as r}
-              <option value={r} selected={r === selectedRegion}>{r}</option>
+          <div class="risk-legend">
+            <span class="legend-caption">Risk Level</span>
+            {#each Object.entries(RISK_LABELS) as [lvl, label]}
+              <span class="legend-item">
+                <span class="legend-dot" style="background: {riskColor(lvl)}"></span>{label}
+              </span>
             {/each}
-          </select>
+          </div>
 
-          <div class="play-row">
-            <button class="play-btn {isPlaying ? 'playing' : ''}" on:click={togglePlay}>
-              {#if isPlaying}
-                <span class="icon">⏸</span> Pause
-              {:else}
-                <span class="icon">▶</span> Play
+          <div class="map-wrap">
+            <div bind:this={mapEl} class="map-canvas"></div>
+            {#if loadingData}<div class="loading-bar"></div>{/if}
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-card">
+              {@html ICONS.globe}
+              <div>
+                <div class="stat-label">Countries Monitoring</div>
+                <div class="stat-value">{globalStats.countries}</div>
+                <div class="stat-sub">across {diseases.length} diseases</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              {@html ICONS.activity}
+              <div>
+                <div class="stat-label">Active Outbreaks</div>
+                <div class="stat-value">{globalStats.activeOutbreaks}</div>
+                <div class="stat-sub">HIGH / CRITICAL severity</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              {@html ICONS.bell}
+              <div>
+                <div class="stat-label">High-Risk Regions</div>
+                <div class="stat-value">{globalStats.highRisk}</div>
+                <div class="stat-sub">of {globalStats.countries} countries</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              {@html ICONS.trend}
+              <div>
+                <div class="stat-label">Avg. Case Growth</div>
+                <div class="stat-value {globalStats.avgChange !== null && globalStats.avgChange >= 0 ? 'stat-up' : 'stat-down'}">
+                  {fmtPct(globalStats.avgChange)}
+                </div>
+                <div class="stat-sub">vs. previous period</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              {@html ICONS.database}
+              <div>
+                <div class="stat-label">Records Analyzed</div>
+                <div class="stat-value">{fmt(globalStats.records)}</div>
+                <div class="stat-sub">{SPIKE_BASELINE_MONTHS}-month baseline window</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Disease Trends + Top Hotspots -->
+        <div class="panel-row">
+          <section class="panel trends-panel">
+            <div class="panel-header">
+              <h2>Disease Trends — {selectedCountry || '—'}</h2>
+              <div class="metric-toggle">
+                <button class:active={trendMetric === 'cases'} on:click={() => trendMetric = 'cases'}>Cases</button>
+                <button class:active={trendMetric === 'deaths'} on:click={() => trendMetric = 'deaths'}>Deaths</button>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <div bind:this={trendEl} class="echarts-container chart-trends"></div>
+            </div>
+            <a class="panel-link inert" href="/surveillance">View all disease trends {@html ICONS.arrowRight}</a>
+          </section>
+
+          <section class="panel hotspots-panel">
+            <div class="panel-header">
+              <h2>Top Emerging Hotspots</h2>
+            </div>
+            <div class="hotspot-list">
+              {#each topHotspots as h, i (h.country + h.disease)}
+                <button class="hotspot-row" on:click={() => { selectCountry(h.country); selectedCountryDisease = h.disease; }}>
+                  <span class="hotspot-rank">{i + 1}</span>
+                  <div class="hotspot-info">
+                    <div class="hotspot-name">{h.country}</div>
+                    <div class="hotspot-disease">{diseaseLabel(h.disease)}</div>
+                  </div>
+                  <div class="hotspot-bar-wrap">
+                    <div class="hotspot-bar" style="width: {Math.min(100, h.riskScore)}%; background: {SEVERITY_COLORS[h.topSpike?.severity ?? 'LOW']}"></div>
+                  </div>
+                  <div class="hotspot-score">{h.riskScore}<span>/100</span></div>
+                </button>
+              {/each}
+              {#if topHotspots.length === 0}
+                <div class="empty-note">No anomalies detected yet.</div>
               {/if}
-            </button>
-            <span class="play-hint">scrubs through time</span>
+            </div>
+            <a class="panel-link inert" href="/surveillance">View all hotspots {@html ICONS.arrowRight}</a>
+          </section>
+        </div>
+
+      </div>
+
+      <!-- ── Country detail panel ────────────────────────────────────────── -->
+      <aside class="detail-panel">
+        {#if selectedEntry}
+          {@const entry = selectedEntry}
+          <div class="detail-header">
+            <h2>{entry.country}</h2>
           </div>
+
+          <div class="risk-score-block">
+            <div class="risk-label">Risk Score</div>
+            <div class="risk-score">
+              <span class="risk-number">{entry.riskScore}</span><span class="risk-max">/100</span>
+            </div>
+            <div class="risk-level" style="color: {RISK_COLORS[entry.riskLevel]}">{RISK_LABELS[entry.riskLevel]} Risk</div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="detail-cell">
+              <div class="detail-label">Latest Cases</div>
+              <div class="detail-value">{fmt(entry.totalCases)}</div>
+            </div>
+            <div class="detail-cell">
+              <div class="detail-label">Period Change</div>
+              <div class="detail-value {entry.pctChange !== null && entry.pctChange >= 0 ? 'stat-up' : 'stat-down'}">{fmtPct(entry.pctChange)}</div>
+            </div>
+            <div class="detail-cell">
+              <div class="detail-label">Anomaly (z-score)</div>
+              <div class="detail-value">{formatZ(entry.anomalyZ)}</div>
+            </div>
+            <div class="detail-cell">
+              <div class="detail-label">Active Outbreaks</div>
+              <div class="detail-value">{entry.diseases.filter(d => d.topSpike && (d.topSpike.severity === 'HIGH' || d.topSpike.severity === 'CRITICAL')).length}</div>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title">Active Diseases</div>
+            <div class="disease-table">
+              <div class="disease-table-head">
+                <span>Disease</span><span>Cases</span><span>Change</span><span>Trend</span>
+              </div>
+              {#each entry.diseases as d (d.disease)}
+                <button class="disease-row {selectedCountryDisease === d.disease ? 'active' : ''}" on:click={() => selectedCountryDisease = d.disease}>
+                  <span class="disease-name">
+                    <span class="disease-dot" style="background: {diseaseColor(d.disease)}"></span>
+                    {diseaseLabel(d.disease)}
+                  </span>
+                  <span class="disease-cases">{fmt(d.latestCases)}</span>
+                  <span class="disease-change {d.pctChange !== null && d.pctChange >= 0 ? 'stat-up' : 'stat-down'}">{fmtPct(d.pctChange)}</span>
+                  <svg class="sparkline" viewBox="0 0 64 24" preserveAspectRatio="none">
+                    <path d={sparklinePath(d.series)} fill="none" stroke={diseaseColor(d.disease)} stroke-width="1.5" />
+                  </svg>
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title">
+              Cases Over Time
+              <span class="detail-section-sub">{diseaseLabel(selectedCountryDisease)}</span>
+            </div>
+            <div class="chart-wrap small">
+              <div bind:this={countryEl} class="echarts-container chart-country"></div>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title-row">
+              <div class="detail-section-title">Recent Alerts</div>
+              <button class="text-btn" on:click={scanSelected} disabled={scanning}>
+                {@html ICONS.refresh}{scanning ? 'Scanning…' : 'Run scan'}
+              </button>
+            </div>
+            {#if scanMessage}<div class="scan-msg">{scanMessage}</div>{/if}
+            <div class="alert-list">
+              {#each alerts.filter(a => a.region === entry.country).slice(0, 5) as a (a.id)}
+                <div
+                  class="alert-item {newAlertIds.has(a.id) ? (a.severity === 'HIGH' || a.severity === 'CRITICAL' ? 'alert-pulse' : 'alert-fade') : ''}"
+                  style="--sev: {SEVERITY_COLORS[a.severity]}"
+                >
+                  <div class="alert-top">
+                    <span class="alert-sev" style="color: {SEVERITY_COLORS[a.severity]}">{a.severity}</span>
+                    <span class="alert-time">{timeAgo(a.created_at)}</span>
+                  </div>
+                  <div class="alert-msg">{a.message}</div>
+                </div>
+              {/each}
+              {#if alerts.filter(a => a.region === entry.country).length === 0}
+                <div class="empty-note">No alerts for {entry.country} yet.</div>
+              {/if}
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title">Recommended Actions</div>
+            <ul class="action-list">
+              {#each recommendedActions as action}
+                <li>{action}</li>
+              {/each}
+            </ul>
+          </div>
+
+          <a class="full-report-btn inert" href="/surveillance">View Full Country Report {@html ICONS.arrowRight}</a>
         {:else}
-          <label class="field-label mt">Cluster radius (ε km)</label>
-          <input
-            type="number"
-            class="select"
-            min="0.5"
-            max="20"
-            step="0.5"
-            bind:value={epsKm}
-            on:change={loadHotspots}
-          />
-          <label class="field-label mt">Min reports (minPts)</label>
-          <input
-            type="number"
-            class="select"
-            min="1"
-            max="50"
-            step="1"
-            bind:value={minPts}
-            on:change={loadHotspots}
-          />
-          {#if hotspotData.report_count > 0}
-            <div class="hotspot-meta">
-              <span class="meta-val">{hotspotData.report_count.toLocaleString()}</span> reports →
-              <span class="meta-val" style="color: {diseaseColor(selectedDisease)}">{hotspotData.cluster_count}</span> clusters ·
-              <span class="meta-val" style="color:#6b7280">{hotspotData.noise_points.length}</span> noise
-            </div>
-          {/if}
+          <div class="empty-note">Loading country data…</div>
         {/if}
-      </section>
-
-      <!-- Headline stat cards (one per disease) -->
-      <section class="stat-cards">
-        <div class="cards-label">All diseases · cumulative</div>
-        {#each summaryRows as s}
-          <div class="stat-card">
-            <div class="stat-disease" style="color: {diseaseColor(s.disease_name)}">
-              {diseaseLabel(s.disease_name)}
-            </div>
-            <div class="stat-row">
-              <div class="stat-block">
-                <div class="stat-value">{fmt(s.total_cases)}</div>
-                <div class="stat-key">cases</div>
-              </div>
-              <div class="stat-block">
-                <div class="stat-value red">{fmt(s.total_deaths)}</div>
-                <div class="stat-key">deaths</div>
-              </div>
-              <div class="stat-block">
-                <div class="stat-value">{fmt(s.peak_cases)}</div>
-                <div class="stat-key">peak</div>
-              </div>
-            </div>
-            {#if s.peak_date}
-              <div class="stat-peak-date">peak: {s.peak_date}</div>
-            {/if}
-          </div>
-        {/each}
-        <div class="source-attr">
-          Data: <a href="https://ourworldindata.org/" target="_blank" rel="noreferrer">Our World in Data</a>
-          (CC BY) · approximated subset
-        </div>
-      </section>
-    </aside>
-
-    <!-- RIGHT: chart (time series or hotspot map) -->
-    <main class="chart-area">
-      {#if view === 'timeseries'}
-        <div class="chart-header">
-          <span class="chart-title">
-            <span class="dot-lg" style="background: {diseaseColor(selectedDisease)}"></span>
-            {diseaseLabel(selectedDisease)} — {selectedRegion}
-          </span>
-          <span class="chart-sub">confirmed cases &amp; deaths · use the scrubber or ▶ to play through time</span>
-        </div>
-        <div bind:this={chartEl} class="echarts-container"></div>
-        {#if seriesData.length === 0}
-          <div class="no-data">no data for {diseaseLabel(selectedDisease)} / {selectedRegion || '(no region selected)'}</div>
-        {/if}
-      {:else}
-        <div class="chart-header">
-          <span class="chart-title">
-            <span class="dot-lg" style="background: {diseaseColor(selectedDisease)}"></span>
-            Outbreak Hotspots — {diseaseLabel(selectedDisease)}
-          </span>
-          <span class="chart-sub">
-            DBSCAN ε={epsKm} km · minPts={minPts} · circles = clusters (size ∝ total cases) · ◇ = isolated noise
-          </span>
-        </div>
-        <div bind:this={hotspotChartEl} class="echarts-container"></div>
-        {#if hotspotData.cluster_count === 0 && hotspotData.noise_points.length === 0}
-          <div class="no-data">no geolocated reports for {diseaseLabel(selectedDisease)}</div>
-        {/if}
-      {/if}
-    </main>
-
-    <!-- FAR RIGHT: live alert feed (B3 spike detection) -->
-    <aside class="alert-feed">
-      <div class="feed-header">
-        <span class="feed-title">Live Alerts</span>
-        <span
-          class="ws-indicator {wsConnected ? 'connected' : ''}"
-          title={wsConnected ? 'live feed connected' : 'reconnecting…'}
-        ></span>
-      </div>
-
-      {#if view === 'timeseries'}
-        <button
-          class="scan-btn"
-          on:click={scanForSpikes}
-          disabled={scanning || !selectedDisease || !selectedRegion}
-        >
-          {scanning ? 'Scanning…' : `Scan ${diseaseLabel(selectedDisease)} / ${selectedRegion || '—'}`}
-        </button>
-        {#if scanMessage}
-          <div class="scan-msg">{scanMessage}</div>
-        {/if}
-      {/if}
-
-      <div class="alert-list">
-        {#each alerts as a (a.id)}
-          <div
-            class="alert-item {newAlertIds.has(a.id) ? (a.severity === 'HIGH' || a.severity === 'CRITICAL' ? 'alert-pulse' : 'alert-fade') : ''}"
-            style="--sev: {SEVERITY_COLORS[a.severity]}"
-          >
-            <div class="alert-top">
-              <span class="alert-sev" style="color: {SEVERITY_COLORS[a.severity]}">{a.severity}</span>
-              <span class="alert-time">{timeAgo(a.created_at)}</span>
-            </div>
-            <div class="alert-msg">{a.message}</div>
-            {#if a.z_score !== null}
-              <div class="alert-meta">z = {formatZ(a.z_score)}</div>
-            {/if}
-          </div>
-        {/each}
-        {#if alerts.length === 0}
-          <div class="no-alerts">no alerts yet — run a scan to check for spikes</div>
-        {/if}
-      </div>
-    </aside>
+      </aside>
+    </div>
   </div>
 </div>
 
-<!-- ── Styles ──────────────────────────────────────────────────────────────── -->
-
 <style>
-  /* ── Reset / Base ─────────────────────────────────────────────── */
+  :global(html) {
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+    --bg: #0a0d14;
+    --bg-panel: #11151f;
+    --bg-sunken: #0c0f17;
+    --bg-hover: #1a1f2c;
+    --border: #222838;
+    --border-soft: #1a1f2c;
+    --text: #e6e8ee;
+    --text-muted: #8b94a7;
+    --text-faint: #5b6472;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, 0.14);
+    --green: #22c55e;
+    --red: #ef4444;
+  }
+
+  :global(html[data-theme='light']) {
+    --bg: #f5f6f8;
+    --bg-panel: #ffffff;
+    --bg-sunken: #f7f8fa;
+    --bg-hover: #eef0f4;
+    --border: #e7e9ee;
+    --border-soft: #eef0f4;
+    --text: #171a21;
+    --text-muted: #5b6472;
+    --text-faint: #9aa3b2;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.08);
+  }
+
+  :global(html),
   :global(body) {
     margin: 0;
-    background: #0d1117;
-    color: #e2e8f0;
-    font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
   }
 
-  /* ── Page shell ───────────────────────────────────────────────── */
-  .page {
+  :global(*) {
+    box-sizing: border-box;
+  }
+
+  /* ── Shell layout ─────────────────────────────────────────────────────── */
+
+  .shell {
+    display: flex;
+    min-height: 100vh;
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+
+  /* ── Sidebar ──────────────────────────────────────────────────────────── */
+
+  .sidebar {
+    width: 232px;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    gap: 1px;
+    padding: 16px 12px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: 0;
     height: 100vh;
-    overflow: hidden;
+    overflow-y: auto;
+  }
+  .sidebar::-webkit-scrollbar { width: 6px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px 16px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .brand-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .brand-mark :global(svg) { width: 18px; height: 18px; }
+  .brand-name { font-weight: 600; font-size: 0.92rem; color: var(--text); }
+  .brand-section {
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
   }
 
-  /* ── Top bar ──────────────────────────────────────────────────── */
+  .sidebar-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
+  .sidebar-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding-top: 8px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.83rem;
+    font-family: var(--sans);
+    color: var(--text-muted);
+    text-decoration: none;
+    background: transparent;
+    border: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+  }
+  .nav-item :global(svg) { width: 17px; height: 17px; flex-shrink: 0; }
+  a.nav-item:hover,
+  .theme-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active {
+    color: var(--text);
+    background: var(--accent-soft);
+    font-weight: 500;
+  }
+  .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent);
+  }
+  .nav-item.inert { cursor: default; opacity: 0.5; }
+  .nav-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--red);
+    background: rgba(239, 68, 68, 0.14);
+    border-radius: 8px;
+    padding: 1px 6px;
+  }
+
+  /* ── Main column ──────────────────────────────────────────────────────── */
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
   .topbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 20px;
-    height: 44px;
-    background: #161b22;
-    border-bottom: 1px solid #21262d;
+    gap: 14px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
     flex-shrink: 0;
   }
-  .brand {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: #e2e8f0;
-  }
-  .pill {
-    background: #1f6feb33;
-    color: #58a6ff;
-    padding: 1px 8px;
-    border-radius: 20px;
-    font-size: 11px;
-    margin-left: 8px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-  }
-  nav { display: flex; align-items: center; gap: 20px; }
-  nav a {
-    color: #6b7280;
-    text-decoration: none;
-    font-size: 12px;
-    transition: color 0.15s;
-  }
-  nav a:hover { color: #e2e8f0; }
-  nav .active { color: #e2e8f0; font-weight: 600; }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .icon-btn :global(svg) { width: 16px; height: 16px; }
 
-  /* ── Three-column layout ──────────────────────────────────────── */
-  .layout {
-    display: grid;
-    grid-template-columns: 220px 1fr 270px;
-    flex: 1;
-    overflow: hidden;
-  }
-
-  /* ── Sidebar ──────────────────────────────────────────────────── */
-  .sidebar {
-    background: #0d1117;
-    border-right: 1px solid #21262d;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    padding: 16px 14px;
-    gap: 20px;
-  }
-
-  .controls { display: flex; flex-direction: column; gap: 8px; }
-
-  .field-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: #6b7280;
-    text-transform: uppercase;
-    margin-bottom: 2px;
-  }
-  .mt { margin-top: 8px; }
-
-  /* Disease buttons: thin left-border accent, subtle hover */
-  .disease-list { display: flex; flex-direction: column; gap: 2px; }
-  .disease-btn {
+  .search-box {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: none;
-    border: 1px solid transparent;
+    flex: 1;
+    max-width: 440px;
+    padding: 7px 12px;
+    border-radius: 6px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .search-box :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .search-box input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-family: var(--sans);
+    font-size: 0.83rem;
+    color: var(--text);
+  }
+  .search-box input::placeholder { color: var(--text-faint); }
+  .kbd {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: #94a3b8;
-    cursor: pointer;
-    padding: 5px 8px;
-    font-size: 12px;
-    text-align: left;
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    padding: 1px 5px;
+    flex-shrink: 0;
   }
-  .disease-btn:hover { background: #161b22; color: #e2e8f0; }
-  .disease-btn.active {
-    background: #161b22;
-    color: #e2e8f0;
-    border-color: var(--accent, #58a6ff);
+
+  .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .data-updated {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
   }
-  .dot {
+  .ws-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
+    background: var(--text-faint);
     flex-shrink: 0;
   }
-
-  .select {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 4px;
-    color: #e2e8f0;
-    font-size: 12px;
-    padding: 5px 8px;
-    width: 100%;
-    cursor: pointer;
-    outline: none;
+  .ws-dot.connected {
+    background: var(--green);
+    animation: breathe 2.4s ease-in-out infinite;
   }
-  .select:focus { border-color: #58a6ff; }
-
-  .play-row {
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+    50% { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+  }
+  .topbar-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 10px;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
   }
-  .play-btn {
+  .topbar-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .topbar-btn :global(svg) { width: 14px; height: 14px; }
+
+  /* ── Content layout ───────────────────────────────────────────────────── */
+
+  .content {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 20px 24px;
+    flex: 1;
+  }
+  .content-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 8px 14px;
+    font-size: 0.83rem;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+  .tab.inert { opacity: 0.45; }
+
+  /* ── Panels ───────────────────────────────────────────────────────────── */
+
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .panel-header h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .panel-controls { display: flex; gap: 8px; }
+  .quiet-select {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .risk-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .legend-caption {
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.66rem;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .map-wrap {
+    position: relative;
+    height: 380px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+  }
+  .map-canvas { width: 100%; height: 100%; }
+  .loading-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .loading-bar::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -40%;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: sweep 1.2s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0% { left: -40%; }
+    100% { left: 100%; }
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .stat-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 6px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+    transition: border-color 0.15s ease;
+  }
+  .stat-card:hover { border-color: var(--border); }
+  .stat-card :global(svg) {
+    width: 17px;
+    height: 17px;
+    color: var(--accent);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .stat-label {
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin-top: 3px;
+    color: var(--text);
+  }
+  .stat-sub { font-size: 0.7rem; color: var(--text-faint); margin-top: 2px; }
+  .stat-up { color: var(--green); }
+  .stat-down { color: var(--red); }
+
+  /* ── Trends + hotspots row ────────────────────────────────────────────── */
+
+  .panel-row {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+  }
+  .trends-panel { flex: 1.7; min-width: 0; display: flex; flex-direction: column; }
+  .hotspots-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .metric-toggle {
+    display: flex;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .metric-toggle button {
+    padding: 4px 12px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .metric-toggle button.active {
+    background: var(--bg-panel);
+    color: var(--text);
+  }
+
+  .chart-wrap { height: 280px; }
+  .chart-wrap.small { height: 150px; }
+  .echarts-container { width: 100%; height: 100%; }
+
+  .panel-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 0.78rem;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .panel-link :global(svg) { width: 13px; height: 13px; }
+  .panel-link.inert { color: var(--text-faint); pointer-events: none; }
+
+  .hotspot-list { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .hotspot-row {
+    display: grid;
+    grid-template-columns: 20px 1fr 60px 48px;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 8px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    font-family: var(--sans);
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .hotspot-row:hover { background: var(--bg-hover); }
+  .hotspot-rank { font-family: var(--mono); font-size: 0.75rem; color: var(--text-faint); text-align: center; }
+  .hotspot-info { min-width: 0; }
+  .hotspot-name {
+    font-size: 0.83rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hotspot-disease { font-size: 0.7rem; color: var(--text-muted); }
+  .hotspot-bar-wrap { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .hotspot-bar { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+  .hotspot-score { font-family: var(--mono); font-size: 0.83rem; font-weight: 600; color: var(--text); text-align: right; }
+  .hotspot-score span { color: var(--text-faint); font-weight: 400; font-size: 0.7rem; }
+
+  .empty-note { font-size: 0.8rem; color: var(--text-faint); padding: 16px 8px; text-align: center; }
+
+  /* ── Country detail panel ─────────────────────────────────────────────── */
+
+  .detail-panel {
+    width: 340px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+    position: sticky;
+    top: 76px;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+  }
+  .detail-panel::-webkit-scrollbar { width: 6px; }
+  .detail-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .detail-header h2 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+
+  .risk-score-block {
+    text-align: center;
+    padding: 16px;
+    border-radius: 6px;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+  }
+  .risk-label { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .risk-score { font-family: var(--mono); margin-top: 6px; }
+  .risk-number { font-size: 2.4rem; font-weight: 700; color: var(--text); }
+  .risk-max { font-size: 1rem; color: var(--text-faint); }
+  .risk-level { font-size: 0.83rem; font-weight: 600; margin-top: 4px; }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .detail-cell {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .detail-label { font-size: 0.64rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .detail-value { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
+
+  .detail-section { padding-top: 14px; border-top: 1px solid var(--border-soft); }
+  .detail-section-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+  .detail-section-sub {
+    text-transform: none;
+    font-weight: 400;
+    color: var(--text-faint);
+    letter-spacing: normal;
+    margin-left: 6px;
+  }
+  .detail-section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .detail-section-title-row .detail-section-title { margin-bottom: 0; }
+
+  .disease-table { display: flex; flex-direction: column; gap: 2px; }
+  .disease-table-head,
+  .disease-row {
+    display: grid;
+    grid-template-columns: 1fr 52px 48px 52px;
+    align-items: center;
+    gap: 8px;
+  }
+  .disease-table-head {
+    font-size: 0.6rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 8px 4px;
+  }
+  .disease-table-head span:not(:first-child) { text-align: right; }
+  .disease-row {
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    padding: 7px 8px;
+    font-family: var(--sans);
+    cursor: pointer;
+    text-align: left;
+  }
+  .disease-row:hover { background: var(--bg-hover); }
+  .disease-row.active { background: var(--accent-soft); }
+  .disease-name { display: flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--text); min-width: 0; }
+  .disease-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .disease-cases { font-family: var(--mono); font-size: 0.8rem; color: var(--text); text-align: right; }
+  .disease-change { font-family: var(--mono); font-size: 0.74rem; text-align: right; }
+  .sparkline { width: 48px; height: 20px; justify-self: end; }
+
+  .text-btn {
     display: flex;
     align-items: center;
     gap: 5px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 4px;
-    color: #e2e8f0;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-family: var(--sans);
+    font-size: 0.74rem;
     cursor: pointer;
-    font-size: 12px;
-    padding: 5px 12px;
-    transition: border-color 0.12s, background 0.12s;
+    padding: 0;
   }
-  .play-btn:hover { border-color: #58a6ff; background: #1c2128; }
-  .play-btn.playing { border-color: #f59e0b; color: #f59e0b; }
-  .icon { font-size: 10px; }
-  .play-hint { font-size: 10px; color: #4b5563; }
+  .text-btn:disabled { color: var(--text-faint); cursor: default; }
+  .text-btn :global(svg) { width: 12px; height: 12px; }
+  .text-btn:disabled :global(svg) { animation: spin 1s linear infinite; }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
 
-  /* ── Stat cards ───────────────────────────────────────────────── */
-  .stat-cards { display: flex; flex-direction: column; gap: 8px; }
-  .cards-label {
-    font-size: 10px;
-    color: #4b5563;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .stat-card {
-    background: #161b22;
-    border: 1px solid #21262d;
+  .scan-msg { font-size: 0.74rem; color: var(--accent); margin-bottom: 8px; }
+
+  .alert-list { display: flex; flex-direction: column; gap: 6px; }
+  .alert-item {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+    border-left: 3px solid var(--sev, var(--border));
     border-radius: 6px;
     padding: 8px 10px;
   }
-  .stat-disease {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    margin-bottom: 5px;
+  .alert-top { display: flex; justify-content: space-between; align-items: center; }
+  .alert-sev { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; }
+  .alert-time { font-size: 0.66rem; color: var(--text-faint); font-family: var(--mono); }
+  .alert-msg { font-size: 0.78rem; color: var(--text); margin-top: 4px; line-height: 1.4; }
+
+  .alert-fade { animation: alertFade 0.4s ease-out; }
+  .alert-pulse { animation: alertFade 0.4s ease-out, alertPulse 0.7s ease-out 2; }
+  @keyframes alertFade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
-  .stat-row { display: flex; gap: 8px; }
-  .stat-block { flex: 1; }
-  .stat-value {
-    font-size: 14px;
-    font-weight: 700;
-    color: #e2e8f0;
-    line-height: 1;
-  }
-  .stat-value.red { color: #ef4444; }
-  .stat-key {
-    font-size: 9px;
-    color: #4b5563;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-top: 2px;
-  }
-  .stat-peak-date {
-    font-size: 10px;
-    color: #6b7280;
-    margin-top: 4px;
+  @keyframes alertPulse {
+    0% { box-shadow: 0 0 0 0 var(--sev); }
+    70% { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
   }
 
-  .source-attr {
-    font-size: 10px;
-    color: #374151;
-    line-height: 1.5;
-    margin-top: 4px;
-  }
-  .source-attr a { color: #4b5563; }
-  .source-attr a:hover { color: #9ca3af; }
-
-  /* ── Chart area ───────────────────────────────────────────────── */
-  .chart-area {
-    display: flex;
-    flex-direction: column;
-    padding: 14px 20px 10px;
-    overflow: hidden;
-    position: relative;
-  }
-  .chart-header {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-bottom: 10px;
-    flex-shrink: 0;
-  }
-  .chart-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 700;
-    color: #e2e8f0;
-  }
-  .dot-lg {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .chart-sub {
-    font-size: 10px;
-    color: #4b5563;
-    letter-spacing: 0.04em;
-    padding-left: 18px;
-  }
-
-  /* ECharts container fills remaining space */
-  .echarts-container {
-    flex: 1;
-    width: 100%;
-    min-height: 0;
-  }
-
-  .no-data {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: #374151;
-    font-size: 13px;
-  }
-
-  /* ── View toggle ──────────────────────────────────────────────── */
-  .view-toggle {
-    display: flex;
-    gap: 2px;
-    background: #0d1117;
-    border: 1px solid #21262d;
-    border-radius: 5px;
-    padding: 2px;
-  }
-  .vtab {
-    flex: 1;
-    background: none;
-    border: none;
-    border-radius: 3px;
-    color: #6b7280;
-    cursor: pointer;
-    font-size: 11px;
-    padding: 4px 0;
-    transition: background 0.12s, color 0.12s;
-  }
-  .vtab:hover { color: #e2e8f0; }
-  .vtab.active { background: #161b22; color: #e2e8f0; font-weight: 600; }
-
-  /* ── Hotspot meta line ────────────────────────────────────────── */
-  .hotspot-meta {
-    font-size: 10px;
-    color: #4b5563;
-    margin-top: 8px;
-    line-height: 1.6;
-  }
-  .meta-val { font-weight: 700; }
-
-  /* ── Live alert feed (B3) ─────────────────────────────────────── */
-  .alert-feed {
-    background: #0d1117;
-    border-left: 1px solid #21262d;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 16px 14px;
-    gap: 10px;
-  }
-  .feed-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-  }
-  .feed-title {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #94a3b8;
-  }
-  .ws-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #30363d;
-    transition: background 0.3s, box-shadow 0.3s;
-  }
-  .ws-indicator.connected {
-    background: #22c55e;
-    box-shadow: 0 0 6px #22c55e88;
-  }
-
-  .scan-btn {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 4px;
-    color: #e2e8f0;
-    cursor: pointer;
-    font-size: 11px;
-    padding: 6px 10px;
-    text-align: left;
-    transition: border-color 0.12s, background 0.12s;
-    flex-shrink: 0;
-  }
-  .scan-btn:hover:not(:disabled) { border-color: #58a6ff; background: #1c2128; }
-  .scan-btn:disabled { opacity: 0.5; cursor: default; }
-  .scan-msg {
-    font-size: 10px;
-    color: #6b7280;
-    flex-shrink: 0;
-  }
-
-  .alert-list {
+  .action-list {
+    margin: 0;
+    padding-left: 1.1rem;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.45;
   }
-  .alert-item {
-    background: #161b22;
-    border: 1px solid #21262d;
-    border-left: 3px solid var(--sev, #30363d);
-    border-radius: 4px;
-    padding: 7px 9px;
-  }
-  .alert-top {
+  .action-list li::marker { color: var(--accent); }
+
+  .full-report-btn {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 3px;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.83rem;
   }
-  .alert-sev {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-  }
-  .alert-time {
-    font-size: 10px;
-    color: #4b5563;
-  }
-  .alert-msg {
-    font-size: 11px;
-    color: #cbd5e1;
-    line-height: 1.4;
-  }
-  .alert-meta {
-    font-size: 10px;
-    color: #6b7280;
-    margin-top: 3px;
-  }
-  .no-alerts {
-    font-size: 11px;
-    color: #374151;
-    text-align: center;
-    margin-top: 20px;
-  }
+  .full-report-btn :global(svg) { width: 14px; height: 14px; }
+  .full-report-btn.inert { opacity: 0.5; pointer-events: none; }
 
-  /* New-alert entrance, severity-driven: LOW/MEDIUM fade in calmly,
-     HIGH/CRITICAL also pulse their severity glow. */
-  .alert-fade {
-    animation: alert-fade-in 0.6s ease-out;
+  /* ── Responsive ───────────────────────────────────────────────────────── */
+
+  @media (max-width: 1280px) {
+    .stat-row { grid-template-columns: repeat(3, 1fr); }
+    .panel-row { flex-direction: column; }
   }
-  .alert-pulse {
-    animation: alert-fade-in 0.4s ease-out, pulse-glow 1.8s ease-out;
+  @media (max-width: 1100px) {
+    .content { flex-direction: column; }
+    .detail-panel { width: 100%; position: static; max-height: none; }
   }
-  @keyframes alert-fade-in {
-    from { opacity: 0; transform: translateY(-6px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes pulse-glow {
-    0%   { box-shadow: 0 0 0 0 var(--sev); }
-    40%  { box-shadow: 0 0 14px 2px var(--sev); }
-    100% { box-shadow: 0 0 0 0 transparent; }
+  @media (max-width: 720px) {
+    .sidebar { display: none; }
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .topbar-btn span { display: none; }
   }
 </style>
