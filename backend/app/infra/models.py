@@ -56,6 +56,11 @@ class Alert(Base):
     severity = Column(String, nullable=False)
     message = Column(Text, nullable=False)
     region = Column(String, nullable=True)
+    # B3 spike-detection context: which disease/date/z-score triggered this
+    # alert.  Nullable for forward-compatibility with non-spike alert types.
+    disease_name = Column(String, nullable=True)
+    event_date = Column(Date, nullable=True)
+    z_score = Column(Double, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     resolved_at = Column(TIMESTAMP(timezone=True), nullable=True)
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Annotated
 
@@ -237,6 +237,44 @@ class HotspotResponse(BaseModel):
     min_pts: int
     report_count: int                    # total reports fed into the algorithm
     cluster_count: int                   # number of real clusters (excludes noise)
+
+
+# ── Spike detection / alerts (B3) ────────────────────────────────────────────
+
+class SpikeDetectionResponse(BaseModel):
+    """One anomalous point flagged by the z-score detector."""
+    date: str          # YYYY-MM-DD
+    value: int
+    rolling_mean: float
+    rolling_std: float
+    z_score: float
+    severity: str       # LOW | MEDIUM | HIGH | CRITICAL
+
+
+class AlertResponse(BaseModel):
+    """One row from the alerts table."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    severity: str
+    message: str
+    region: str | None
+    disease_name: str | None
+    event_date: date | None
+    z_score: float | None
+    created_at: datetime
+    resolved_at: datetime | None
+
+
+class ScanResponse(BaseModel):
+    """Full result of POST /surveillance/scan."""
+    disease_name: str
+    region: str
+    window: int
+    points_scanned: int
+    detections: list[SpikeDetectionResponse]
+    new_alerts: list[AlertResponse]   # only newly-created alerts (idempotent re-scans -> [])
 
 
 class AssignmentResponse(BaseModel):

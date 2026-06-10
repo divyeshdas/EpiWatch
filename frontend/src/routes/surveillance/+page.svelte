@@ -47,6 +47,39 @@
     cluster_count: number;
   };
 
+  type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+  type SpikeDetection = {
+    date: string;
+    value: number;
+    rolling_mean: number;
+    rolling_std: number;
+    z_score: number;
+    severity: Severity;
+  };
+
+  type AlertRow = {
+    id: number;
+    type: string;
+    severity: Severity;
+    message: string;
+    region: string | null;
+    disease_name: string | null;
+    event_date: string | null;
+    z_score: number | null;
+    created_at: string;
+    resolved_at: string | null;
+  };
+
+  type ScanResponse = {
+    disease_name: string;
+    region: string;
+    window: number;
+    points_scanned: number;
+    detections: SpikeDetection[];
+    new_alerts: AlertRow[];
+  };
+
   // ── State ──────────────────────────────────────────────────────────────────
 
   const API = 'http://localhost:8000/surveillance';
@@ -65,6 +98,17 @@
     measles:  'Measles',
     dengue:   'Dengue',
     cholera:  'Cholera',
+  };
+
+  // Severity scale — meaningful, never decorative: green -> red as B3 alerts escalate.
+  const SEVERITY_COLORS: Record<Severity, string> = {
+    LOW:      '#22c55e',
+    MEDIUM:   '#f59e0b',
+    HIGH:     '#f97316',
+    CRITICAL: '#ef4444',
+  };
+  const SEVERITY_MARK_SIZE: Record<Severity, number> = {
+    LOW: 8, MEDIUM: 11, HIGH: 14, CRITICAL: 18,
   };
 
   let diseases: DiseaseInfo[] = [];
@@ -88,6 +132,15 @@
     clusters: [], noise_points: [], eps_km: 2.0, min_pts: 3,
     report_count: 0, cluster_count: 0,
   };
+
+  // Spike detection / alert feed state (B3)
+  let spikes: SpikeDetection[] = [];
+  let alerts: AlertRow[] = [];
+  let newAlertIds = new Set<number>();
+  let scanning = false;
+  let scanMessage: string | null = null;
+  let ws: WebSocket | null = null;
+  let wsConnected = false;
 
   // ECharts — browser-only; never touches SSR
   let chartEl: HTMLDivElement;
@@ -126,7 +179,110 @@
     const url = `${API}/timeseries?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
     const r = await fetch(url);
     seriesData = await r.json();
+    await loadSpikes();
     renderChart();
+  }
+
+  // ── Spike detection + alert feed (B3) ──────────────────────────────────────
+
+  // Read-only preview of the z-score detector for the current series — used
+  // to mark spikes on the chart.  No alerts are created by this call.
+  async function loadSpikes() {
+    if (!selectedDisease || !selectedRegion) { spikes = []; return; }
+    const url = `${API}/spikes?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
+    const r = await fetch(url);
+    spikes = r.ok ? await r.json() : [];
+  }
+
+  async function loadAlerts() {
+    const r = await fetch('http://localhost:8000/alerts?limit=30');
+    if (r.ok) alerts = await r.json();
+  }
+
+  // Runs the detector, persists severity-tiered alerts, and emits
+  // AlertGenerated for any new ones (also picked up live via the WebSocket).
+  async function scanForSpikes() {
+    if (!selectedDisease || !selectedRegion || scanning) return;
+    scanning = true;
+    scanMessage = null;
+    try {
+      const url = `${API}/scan?disease=${encodeURIComponent(selectedDisease)}&region=${encodeURIComponent(selectedRegion)}`;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) {
+        scanMessage = 'scan failed';
+        return;
+      }
+      const body: ScanResponse = await r.json();
+      scanMessage = `${body.detections.length} detection(s) · ${body.new_alerts.length} new alert(s)`;
+      for (const a of body.new_alerts) {
+        addAlert(a);
+      }
+      await loadSpikes();
+      renderChart();
+    } finally {
+      scanning = false;
+    }
+  }
+
+  // Insert a new alert at the top of the feed (deduped by id) and trigger
+  // its severity-pulse animation.
+  function addAlert(a: AlertRow) {
+    if (alerts.find(x => x.id === a.id)) return;
+    alerts = [a, ...alerts].slice(0, 50);
+    newAlertIds.add(a.id);
+    newAlertIds = newAlertIds;
+    setTimeout(() => {
+      newAlertIds.delete(a.id);
+      newAlertIds = newAlertIds;
+    }, 2200);
+  }
+
+  // ── Live feed WebSocket ───────────────────────────────────────────────────
+
+  function connectWs() {
+    ws = new WebSocket('ws://localhost:8000/ws');
+    ws.onopen = () => { wsConnected = true; };
+    ws.onclose = () => {
+      wsConnected = false;
+      setTimeout(connectWs, 2000);
+    };
+    ws.onerror = () => ws?.close();
+    ws.onmessage = (msg: MessageEvent) => {
+      const e = JSON.parse(msg.data);
+      if (e.type === 'AlertGenerated') {
+        const p = e.payload;
+        addAlert({
+          id: p.alert_id,
+          type: p.type,
+          severity: p.severity,
+          message: p.message,
+          region: p.region,
+          disease_name: p.disease_name,
+          event_date: p.event_date,
+          z_score: p.z_score,
+          created_at: p.created_at,
+          resolved_at: null,
+        });
+      }
+    };
+  }
+
+  // SENTINEL_Z (999) means "far above baseline, std==0" — show as ">5σ"
+  // rather than the raw sentinel number.
+  function formatZ(z: number | null): string {
+    if (z === null) return '';
+    if (z >= 999) return '>5σ';
+    return `${z.toFixed(2)}σ`;
+  }
+
+  function timeAgo(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
   }
 
   // ── ECharts rendering ──────────────────────────────────────────────────────
@@ -241,6 +397,33 @@
             ]),
           },
           emphasis: { disabled: true },
+          // B3: severity-colored markers on detected spike dates — the
+          // detection made visible against the curve that triggered it.
+          markPoint: {
+            symbol: 'circle',
+            data: spikes.map(s => ({
+              name: s.severity,
+              coord: [s.date, s.value],
+              symbolSize: SEVERITY_MARK_SIZE[s.severity] ?? 8,
+              itemStyle: {
+                color: SEVERITY_COLORS[s.severity] ?? '#94a3b8',
+                borderColor: '#0d1117',
+                borderWidth: 1.5,
+              },
+              label: { show: false },
+            })),
+            tooltip: {
+              formatter: (params: any) => {
+                const s: SpikeDetection | undefined = spikes.find(
+                  sp => sp.date === params.data.coord[0] && sp.value === params.data.coord[1]
+                );
+                if (!s) return params.name;
+                return `<div style="color:${SEVERITY_COLORS[s.severity]};font-weight:700;margin-bottom:4px">${s.severity} spike</div>`
+                  + `${s.date}<br/>cases: <strong>${s.value.toLocaleString()}</strong><br/>`
+                  + `z-score: <strong>${s.z_score.toFixed(2)}</strong> (baseline μ=${s.rolling_mean.toLocaleString()}, σ=${s.rolling_std.toLocaleString()})`;
+              },
+            },
+          },
         },
         {
           name: `${label} — deaths`,
@@ -431,12 +614,14 @@
     (async () => {
       echarts = await import('echarts');
       chart = echarts.init(chartEl, null, { renderer: 'canvas' });
-      await Promise.all([loadDiseases(), loadSummary()]);
+      await Promise.all([loadDiseases(), loadSummary(), loadAlerts()]);
       // tick() flushes Svelte's pending DOM updates — specifically the <select>
       // options re-render — before loadTimeSeries() reads selectedRegion.
       await tick();
       await loadTimeSeries();
     })();
+
+    connectWs();
 
     return () => window.removeEventListener('resize', resize);
   });
@@ -445,6 +630,7 @@
     stopPlay();
     chart?.dispose();
     hotspotChart?.dispose();
+    ws?.close();
   });
 
   // ── Formatting helpers ────────────────────────────────────────────────────
@@ -627,6 +813,51 @@
         {/if}
       {/if}
     </main>
+
+    <!-- FAR RIGHT: live alert feed (B3 spike detection) -->
+    <aside class="alert-feed">
+      <div class="feed-header">
+        <span class="feed-title">Live Alerts</span>
+        <span
+          class="ws-indicator {wsConnected ? 'connected' : ''}"
+          title={wsConnected ? 'live feed connected' : 'reconnecting…'}
+        ></span>
+      </div>
+
+      {#if view === 'timeseries'}
+        <button
+          class="scan-btn"
+          on:click={scanForSpikes}
+          disabled={scanning || !selectedDisease || !selectedRegion}
+        >
+          {scanning ? 'Scanning…' : `Scan ${diseaseLabel(selectedDisease)} / ${selectedRegion || '—'}`}
+        </button>
+        {#if scanMessage}
+          <div class="scan-msg">{scanMessage}</div>
+        {/if}
+      {/if}
+
+      <div class="alert-list">
+        {#each alerts as a (a.id)}
+          <div
+            class="alert-item {newAlertIds.has(a.id) ? (a.severity === 'HIGH' || a.severity === 'CRITICAL' ? 'alert-pulse' : 'alert-fade') : ''}"
+            style="--sev: {SEVERITY_COLORS[a.severity]}"
+          >
+            <div class="alert-top">
+              <span class="alert-sev" style="color: {SEVERITY_COLORS[a.severity]}">{a.severity}</span>
+              <span class="alert-time">{timeAgo(a.created_at)}</span>
+            </div>
+            <div class="alert-msg">{a.message}</div>
+            {#if a.z_score !== null}
+              <div class="alert-meta">z = {formatZ(a.z_score)}</div>
+            {/if}
+          </div>
+        {/each}
+        {#if alerts.length === 0}
+          <div class="no-alerts">no alerts yet — run a scan to check for spikes</div>
+        {/if}
+      </div>
+    </aside>
   </div>
 </div>
 
@@ -687,10 +918,10 @@
   nav a:hover { color: #e2e8f0; }
   nav .active { color: #e2e8f0; font-weight: 600; }
 
-  /* ── Two-column layout ────────────────────────────────────────── */
+  /* ── Three-column layout ──────────────────────────────────────── */
   .layout {
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: 220px 1fr 270px;
     flex: 1;
     overflow: hidden;
   }
@@ -918,4 +1149,124 @@
     line-height: 1.6;
   }
   .meta-val { font-weight: 700; }
+
+  /* ── Live alert feed (B3) ─────────────────────────────────────── */
+  .alert-feed {
+    background: #0d1117;
+    border-left: 1px solid #21262d;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 16px 14px;
+    gap: 10px;
+  }
+  .feed-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .feed-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+  }
+  .ws-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #30363d;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .ws-indicator.connected {
+    background: #22c55e;
+    box-shadow: 0 0 6px #22c55e88;
+  }
+
+  .scan-btn {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #e2e8f0;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 6px 10px;
+    text-align: left;
+    transition: border-color 0.12s, background 0.12s;
+    flex-shrink: 0;
+  }
+  .scan-btn:hover:not(:disabled) { border-color: #58a6ff; background: #1c2128; }
+  .scan-btn:disabled { opacity: 0.5; cursor: default; }
+  .scan-msg {
+    font-size: 10px;
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+
+  .alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  .alert-item {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-left: 3px solid var(--sev, #30363d);
+    border-radius: 4px;
+    padding: 7px 9px;
+  }
+  .alert-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .alert-sev {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+  .alert-time {
+    font-size: 10px;
+    color: #4b5563;
+  }
+  .alert-msg {
+    font-size: 11px;
+    color: #cbd5e1;
+    line-height: 1.4;
+  }
+  .alert-meta {
+    font-size: 10px;
+    color: #6b7280;
+    margin-top: 3px;
+  }
+  .no-alerts {
+    font-size: 11px;
+    color: #374151;
+    text-align: center;
+    margin-top: 20px;
+  }
+
+  /* New-alert entrance, severity-driven: LOW/MEDIUM fade in calmly,
+     HIGH/CRITICAL also pulse their severity glow. */
+  .alert-fade {
+    animation: alert-fade-in 0.6s ease-out;
+  }
+  .alert-pulse {
+    animation: alert-fade-in 0.4s ease-out, pulse-glow 1.8s ease-out;
+  }
+  @keyframes alert-fade-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-glow {
+    0%   { box-shadow: 0 0 0 0 var(--sev); }
+    40%  { box-shadow: 0 0 14px 2px var(--sev); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
 </style>

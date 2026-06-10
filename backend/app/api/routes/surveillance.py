@@ -13,6 +13,10 @@ Analytical endpoints (outbreak_timeseries table — OWID historical data):
   GET  /surveillance/timeseries           Ordered time-series for one disease+region
   GET  /surveillance/summary              Totals/peaks per disease (headline cards)
 
+Spike detection / alerts (B3, outbreak_timeseries-driven):
+  GET  /surveillance/spikes               Read-only z-score detections (chart markers)
+  POST /surveillance/scan                 Detect + persist alerts + emit AlertGenerated
+
 Why two separate tables served from the same router:
   disease_reports is operational: individual field reports, timestamptz precision,
   used for real-time alerting and B2/B3 input.
@@ -24,10 +28,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_bus, get_outbreak_repo, get_surveillance_repo
+from app.api.deps import get_alert_repo, get_bus, get_outbreak_repo, get_surveillance_repo
 from app.config import settings
 from app.domain.events import Event, EventType
 from app.domain.schemas import (
+    AlertResponse,
     DiseaseInfo,
     DiseaseReportCreate,
     DiseaseReportResponse,
@@ -36,12 +41,17 @@ from app.domain.schemas import (
     OutbreakPoint,
     OutbreakSummary,
     RegionSummary,
+    ScanResponse,
+    SpikeDetectionResponse,
     TimeSeriesPoint,
 )
 from app.events.bus import EventBus
+from app.repositories.alerts import AlertRepository
 from app.repositories.surveillance import SurveillanceRepository
+from app.surveillance.alerts import run_scan
 from app.surveillance.clustering import ClusterPoint, dbscan
 from app.surveillance.repository import OutbreakRepository
+from app.surveillance.spikes import SeriesPoint, Severity, detect_spikes
 
 router = APIRouter(prefix="/surveillance", tags=["surveillance"])
 
@@ -301,3 +311,105 @@ async def outbreak_summary(
     """
     rows = await repo.summary()
     return [OutbreakSummary(**row) for row in rows]
+
+
+# ── Spike detection + alerts (B3) ─────────────────────────────────────────────
+
+def _severity_thresholds() -> dict[Severity, float]:
+    return {
+        Severity.LOW: settings.spike_z_low,
+        Severity.MEDIUM: settings.spike_z_medium,
+        Severity.HIGH: settings.spike_z_high,
+        Severity.CRITICAL: settings.spike_z_critical,
+    }
+
+
+async def _run_detection(
+    disease: str,
+    region: str,
+    repo: OutbreakRepository,
+):
+    """Shared by /spikes and /scan: load the series and run the detector."""
+    rows = await repo.timeseries(disease, region)
+    if not rows:
+        raise HTTPException(status_code=404, detail="no time-series data for this disease/region")
+
+    points = [SeriesPoint(date=r.date.isoformat(), value=r.case_count) for r in rows]
+    detections = detect_spikes(points, window=settings.spike_window_size, thresholds=_severity_thresholds())
+    return points, detections
+
+
+@router.get("/spikes", response_model=list[SpikeDetectionResponse])
+async def get_spikes(
+    disease: str = Query(description="Disease slug (e.g. covid_19)"),
+    region: str = Query(description="Region name (e.g. India)"),
+    repo: OutbreakRepository = Depends(get_outbreak_repo),
+) -> list[SpikeDetectionResponse]:
+    """
+    Read-only preview of the z-score detector over one disease+region series.
+
+    Unlike /scan, this does not persist alerts or emit events — it exists so
+    the frontend can mark detected spikes on the B1 time-series chart without
+    side effects every time the chart re-renders.
+    """
+    _, detections = await _run_detection(disease, region, repo)
+    return [
+        SpikeDetectionResponse(
+            date=d.date,
+            value=d.value,
+            rolling_mean=d.rolling_mean,
+            rolling_std=d.rolling_std,
+            z_score=d.z_score,
+            severity=d.severity.value,
+        )
+        for d in detections
+    ]
+
+
+@router.post("/scan", response_model=ScanResponse)
+async def scan_for_spikes(
+    disease: str = Query(description="Disease slug (e.g. covid_19)"),
+    region: str = Query(description="Region name (e.g. India)"),
+    outbreak_repo: OutbreakRepository = Depends(get_outbreak_repo),
+    alert_repo: AlertRepository = Depends(get_alert_repo),
+    bus: EventBus = Depends(get_bus),
+) -> ScanResponse:
+    """
+    Run the sliding-window z-score detector over one disease+region series,
+    persist a severity-tiered alert for each detection, and emit an
+    AlertGenerated event for each newly-created one.
+
+    Idempotent: detections that were already turned into alerts by a
+    previous scan are skipped (see AlertRepository.create_spike_alert) — they
+    still appear in `detections`, but not in `new_alerts`, and produce no
+    duplicate event.
+    """
+    points, detections = await _run_detection(disease, region, outbreak_repo)
+
+    new_alerts = await run_scan(
+        disease_name=disease,
+        region=region,
+        detections=detections,
+        window=settings.spike_window_size,
+        repo=alert_repo,
+        bus=bus,
+    )
+
+    return ScanResponse(
+        disease_name=disease,
+        region=region,
+        window=settings.spike_window_size,
+        points_scanned=len(points),
+        detections=[
+            SpikeDetectionResponse(
+                date=d.date,
+                value=d.value,
+                rolling_mean=d.rolling_mean,
+                rolling_std=d.rolling_std,
+                z_score=d.z_score,
+                severity=d.severity.value,
+            )
+            for d in detections
+        ],
+        new_alerts=[AlertResponse.model_validate(a) for a in new_alerts],
+    )

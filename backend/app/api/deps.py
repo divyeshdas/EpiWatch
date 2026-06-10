@@ -30,3 +30,8 @@ def get_surveillance_repo(db: AsyncSession = Depends(get_db)):
 def get_outbreak_repo(db: AsyncSession = Depends(get_db)):
     from app.surveillance.repository import OutbreakRepository
     return OutbreakRepository(db)
+
+
+def get_alert_repo(db: AsyncSession = Depends(get_db)):
+    from app.repositories.alerts import AlertRepository
+    return AlertRepository(db)
