@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
-  import { page } from '$app/stores';
-  import { theme, toggleTheme } from '$lib/stores/theme';
+  import { theme } from '$lib/stores/theme';
+  import Sidebar from '$lib/components/Sidebar.svelte';
   import 'leaflet/dist/leaflet.css';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -762,36 +762,7 @@
 <div class="shell">
 
   <!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <span class="brand-mark">{@html ICONS.brand}</span>
-      <div>
-        <div class="brand-name">EpiWatch</div>
-        <div class="brand-section">Routing</div>
-      </div>
-    </div>
-
-    <nav class="sidebar-nav">
-      <a href="/surveillance" class="nav-item {$page.url.pathname === '/surveillance' ? 'active' : ''}">{@html ICONS.surveillance}<span>Overview</span></a>
-      <a href="/emergency" class="nav-item {$page.url.pathname === '/emergency' ? 'active' : ''}">{@html ICONS.truck}<span>Emergency Response</span></a>
-      <span class="nav-item inert">{@html ICONS.globe}<span>Global Map</span></span>
-      <span class="nav-item inert">{@html ICONS.trend}<span>Trends</span></span>
-      <span class="nav-item inert">{@html ICONS.activity}<span>Diseases</span></span>
-      <span class="nav-item inert">{@html ICONS.bell}<span>Alerts</span></span>
-      <span class="nav-item inert">{@html ICONS.database}<span>Data Explorer</span></span>
-      <span class="nav-item inert">{@html ICONS.file}<span>Reports</span></span>
-      <span class="nav-item inert">{@html ICONS.book}<span>Resources</span></span>
-    </nav>
-
-    <div class="sidebar-bottom">
-      <span class="nav-item inert">{@html ICONS.settings}<span>Settings</span></span>
-      <button class="nav-item theme-item" on:click={toggleTheme}>
-        {@html $theme === 'light' ? ICONS.moon : ICONS.sun}
-        <span>{$theme === 'light' ? 'Dark mode' : 'Light mode'}</span>
-      </button>
-      <span class="nav-item inert">{@html ICONS.help}<span>Help</span></span>
-    </div>
-  </aside>
+  <Sidebar section="Routing" />
 
   <!-- ── Main column ───────────────────────────────────────────────────────── -->
   <div class="main">
@@ -1165,101 +1136,6 @@
     color: var(--text);
   }
 
-  /* ── Sidebar ──────────────────────────────────────────────────────────── */
-
-  .sidebar {
-    width: var(--sidebar-w);
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 16px 12px;
-    background: var(--bg-panel);
-    border-right: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    overflow-y: auto;
-  }
-  .sidebar::-webkit-scrollbar { width: 6px; }
-  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-  .sidebar-brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px 16px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border-soft);
-  }
-  .brand-mark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 7px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    flex-shrink: 0;
-  }
-  .brand-mark :global(svg) { width: 18px; height: 18px; }
-  .brand-name { font-weight: 600; font-size: 0.92rem; color: var(--text); }
-  .brand-section {
-    font-size: 0.66rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-top: 2px;
-  }
-
-  .sidebar-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
-  .sidebar-bottom {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding-top: 8px;
-    margin-top: 8px;
-    border-top: 1px solid var(--border-soft);
-  }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    font-size: 0.83rem;
-    font-family: var(--sans);
-    color: var(--text-muted);
-    text-decoration: none;
-    background: transparent;
-    border: none;
-    width: 100%;
-    text-align: left;
-    cursor: pointer;
-    position: relative;
-  }
-  .nav-item :global(svg) { width: 17px; height: 17px; flex-shrink: 0; }
-  a.nav-item:hover,
-  .theme-item:hover { background: var(--bg-hover); color: var(--text); }
-  .nav-item.active {
-    color: var(--text);
-    background: var(--accent-soft);
-    font-weight: 500;
-  }
-  .nav-item.active::before {
-    content: '';
-    position: absolute;
-    left: -12px;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--accent);
-  }
-  .nav-item.inert { cursor: default; opacity: 0.5; }
-
   /* ── Main column ──────────────────────────────────────────────────────── */
 
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -1587,7 +1463,9 @@
     letter-spacing: 0.08em;
   }
   .stat-value {
-    font-family: var(--mono);
+    font-family: var(--sans);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
     font-size: 1.35rem;
     font-weight: 600;
     margin-top: 3px;
@@ -1637,10 +1515,10 @@
   .hospital-spec { font-size: 0.68rem; color: var(--text-faint); text-transform: capitalize; }
   .hospital-region { font-size: 0.78rem; color: var(--text-muted); text-align: right; }
   .capacity-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
-  .capacity-text { font-family: var(--mono); font-size: 0.76rem; color: var(--text); }
+  .capacity-text { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.76rem; color: var(--text); }
   .capacity-bar-wrap { width: 100%; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
   .capacity-bar { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
-  .load-cell { font-family: var(--mono); font-size: 0.83rem; font-weight: 600; text-align: right; }
+  .load-cell { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.83rem; font-weight: 600; text-align: right; }
 
   /* ── Recent emergencies ───────────────────────────────────────────────── */
 
@@ -1712,7 +1590,7 @@
   }
   .risk-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .risk-level { font-size: 0.83rem; font-weight: 600; margin-top: 4px; }
-  .winner-name { font-family: var(--mono); font-size: 1.25rem; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .winner-name { font-family: var(--sans); font-size: 1.25rem; font-weight: 700; color: var(--text); margin-top: 6px; }
 
   .detail-grid {
     display: grid;
@@ -1726,7 +1604,7 @@
     padding: 10px;
   }
   .detail-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-  .detail-value { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
+  .detail-value { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
 
   .detail-section { padding-top: 14px; border-top: 1px solid var(--border-soft); }
   .detail-section-title {
@@ -1829,9 +1707,9 @@
   }
   .candidate-row.winner { background: var(--accent-soft); border-color: var(--accent); }
   .candidate-top { display: flex; align-items: center; gap: 8px; }
-  .candidate-rank { font-family: var(--mono); font-size: 0.7rem; color: var(--text-faint); }
+  .candidate-rank { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.7rem; color: var(--text-faint); }
   .candidate-name { flex: 1; font-size: 0.83rem; font-weight: 500; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .candidate-score { font-family: var(--mono); font-size: 0.83rem; font-weight: 600; color: var(--text); }
+  .candidate-score { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.83rem; font-weight: 600; color: var(--text); }
   .candidate-meta { font-size: 0.7rem; color: var(--text-faint); margin-top: 2px; }
 
   .factor-bar {
@@ -1915,7 +1793,6 @@
     .detail-panel.drawer-open { transform: translateX(0); }
   }
   @media (max-width: 720px) {
-    .sidebar { display: none; }
     .stat-row { grid-template-columns: repeat(2, 1fr); }
     .topbar-btn span { display: none; }
     .hospital-table-head, .hospital-row { grid-template-columns: 1.6fr 1fr 1fr 1fr; }
