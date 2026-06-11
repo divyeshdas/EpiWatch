@@ -201,6 +201,12 @@
   let hospitalLayer: any = null;
   let emergencyMarker: any = null;
   let routeLine: any = null;
+  let routeSource: 'osrm' | 'synthetic-fallback' | null = null;
+  let showFallbackNote = false;
+  let fallbackNoteTimer: ReturnType<typeof setTimeout> | null = null;
+  let osrmRouteCoords: number[][] | null = null;
+  let osrmRouteFor: number | null = null;
+  let osrmRequestId = 0;
   let hospitalsFitted = false;
   let fittedAssignmentId: number | null = null;
 
@@ -309,6 +315,13 @@
     assignError = null;
     revealed = false;
     fittedAssignmentId = null;
+    routeSource = null;
+    osrmRouteCoords = null;
+    osrmRouteFor = null;
+    osrmRequestId++;
+    showFallbackNote = false;
+    if (fallbackNoteTimer) clearTimeout(fallbackNoteTimer);
+    fallbackNoteTimer = null;
   }
 
   function selectCase(c: EmergencyCase) {
@@ -570,20 +583,10 @@
     return out;
   }
 
-  function renderRoute() {
-    if (!leafletMap || !L) return;
+  function drawRouteLine(latlngs: number[][]) {
     if (routeLine) {
       leafletMap.removeLayer(routeLine);
-      routeLine = null;
     }
-    const winner = assignment?.candidates?.[0];
-    const assignedId = assignment?.assigned_hospital_id ?? null;
-    if (!winner || winner.path.length < 2 || assignedId === null) return;
-
-    // The path follows the synthetic road graph used for routing/scoring, not
-    // real streets — it's drawn over real geography for orientation only.
-    // The raw node-to-node hops are smoothed (smoothPath) for readability.
-    const latlngs = smoothPath(winner.path.map(p => [p.latitude, p.longitude]));
     routeLine = L.polyline(latlngs, {
       color: chartPalette().accent,
       weight: 4,
@@ -592,10 +595,101 @@
       lineCap: 'round',
       className: 'route-line',
     }).addTo(leafletMap);
+  }
+
+  // OSRM is used only to draw a geographically realistic line on the map. The
+  // hospital choice, ranking, score breakdown and ETA all come from A* over
+  // our own synthetic routing graph (unchanged) — OSRM never feeds back into
+  // that decision, it just makes the drawn line follow real Mumbai streets.
+  const OSRM_TIMEOUT_MS = 4000;
+
+  async function fetchOsrmRoute(assignedId: number) {
+    if (!pendingLocation) return;
+    const hospital = hospitals.find(h => h.id === assignedId);
+    if (!hospital) return;
+
+    const requestId = ++osrmRequestId;
+    const url = `https://router.project-osrm.org/route/v1/driving/` +
+      `${pendingLocation.lon},${pendingLocation.lat};${hospital.longitude},${hospital.latitude}` +
+      `?overview=full&geometries=geojson`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OSRM_TIMEOUT_MS);
+    try {
+      const r = await fetch(url, { signal: controller.signal });
+      if (!r.ok) throw new Error('OSRM request failed');
+      const data = await r.json();
+      const coords: number[][] | undefined = data?.routes?.[0]?.geometry?.coordinates;
+      if (!coords || coords.length < 2) throw new Error('OSRM returned no route');
+
+      // Bail if a newer request superseded this one, or the assignment moved
+      // on while we were waiting (new emergency, reset, etc.).
+      if (requestId !== osrmRequestId || !leafletMap || !L) return;
+      if ((assignment?.assigned_hospital_id ?? null) !== assignedId) return;
+
+      osrmRouteCoords = coords.map(([lon, lat]) => [lat, lon]);
+      osrmRouteFor = assignedId;
+      drawRouteLine(osrmRouteCoords);
+      routeSource = 'osrm';
+      showFallbackNote = false;
+      if (fallbackNoteTimer) clearTimeout(fallbackNoteTimer);
+      fallbackNoteTimer = null;
+    } catch {
+      // OSRM unavailable, rate-limited, or too slow — keep the synthetic-graph
+      // polyline already drawn by renderRoute() so a route is always shown.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function renderRoute() {
+    if (!leafletMap || !L) return;
+    const winner = assignment?.candidates?.[0];
+    const assignedId = assignment?.assigned_hospital_id ?? null;
+    if (!winner || winner.path.length < 2 || assignedId === null) {
+      if (routeLine) {
+        leafletMap.removeLayer(routeLine);
+        routeLine = null;
+      }
+      routeSource = null;
+      osrmRouteCoords = null;
+      osrmRouteFor = null;
+      osrmRequestId++;
+      showFallbackNote = false;
+      if (fallbackNoteTimer) clearTimeout(fallbackNoteTimer);
+      fallbackNoteTimer = null;
+      return;
+    }
+
+    if (osrmRouteFor === assignedId && osrmRouteCoords) {
+      // Already have a real-road line for this assignment — just redraw it
+      // (e.g. on a theme change, which only affects the line color).
+      drawRouteLine(osrmRouteCoords);
+      routeSource = 'osrm';
+    } else {
+      // Draw the synthetic-graph path immediately as a fallback — see
+      // backend/app/graph/ingest.py for why it's a smoothed grid path, not
+      // real streets. fetchOsrmRoute() then tries to replace this with a
+      // real-road line; if it fails or times out, this stays on screen.
+      const latlngs = smoothPath(winner.path.map(p => [p.latitude, p.longitude]));
+      drawRouteLine(latlngs);
+      routeSource = 'synthetic-fallback';
+
+      // Only surface the "approximate route" note if OSRM hasn't replaced
+      // this within a moment — avoids a flash on the common fast-success path.
+      if (fallbackNoteTimer) clearTimeout(fallbackNoteTimer);
+      fallbackNoteTimer = setTimeout(() => {
+        if (routeSource === 'synthetic-fallback') showFallbackNote = true;
+      }, 600);
+    }
 
     if (fittedAssignmentId !== assignedId) {
       leafletMap.fitBounds(routeLine.getBounds(), { padding: [48, 48], maxZoom: 14 });
       fittedAssignmentId = assignedId;
+    }
+
+    if (osrmRouteFor !== assignedId) {
+      fetchOsrmRoute(assignedId);
     }
   }
 
@@ -661,6 +755,7 @@
   onDestroy(() => {
     leafletMap?.remove();
     ws?.close();
+    if (fallbackNoteTimer) clearTimeout(fallbackNoteTimer);
   });
 </script>
 
@@ -762,6 +857,8 @@
             {#if loadingData}<div class="loading-bar"></div>{/if}
             {#if !pendingLocation}
               <div class="map-hint">Click the map to report an emergency location</div>
+            {:else if showFallbackNote}
+              <div class="map-hint">Live road routing unavailable — showing approximate route</div>
             {/if}
           </div>
 
