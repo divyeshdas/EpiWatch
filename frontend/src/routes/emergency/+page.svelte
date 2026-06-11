@@ -3,6 +3,7 @@
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { theme, toggleTheme } from '$lib/stores/theme';
+  import 'leaflet/dist/leaflet.css';
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -193,10 +194,17 @@
   let ws: WebSocket | null = null;
   let wsConnected = false;
 
-  // ECharts
-  let echarts: any = null;
+  // Map (Leaflet — initialized client-side only, see onMount)
+  let L: any = null;
   let mapEl: HTMLDivElement;
-  let mapChart: any = null;
+  let leafletMap: any = null;
+  let tileLayer: any = null;
+  let tileTheme: 'light' | 'dark' | null = null;
+  let hospitalLayer: any = null;
+  let emergencyMarker: any = null;
+  let routeLine: any = null;
+  let hospitalsFitted = false;
+  let fittedAssignmentId: number | null = null;
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -302,6 +310,7 @@
     assignment = null;
     assignError = null;
     revealed = false;
+    fittedAssignmentId = null;
   }
 
   function selectCase(c: EmergencyCase) {
@@ -449,140 +458,139 @@
     highlightedHospitalId = match?.id ?? null;
   }
 
-  // ── ECharts ────────────────────────────────────────────────────────────────
+  // ── Map (Leaflet) ──────────────────────────────────────────────────────────
 
   function chartPalette() {
     const dark = $theme !== 'light';
     return {
-      text:          dark ? '#f5f5f4' : '#1f1c19',
-      muted:         dark ? '#a8a29e' : '#6b645d',
-      grid:          dark ? '#3a332e' : '#e2dcd4',
-      axis:          dark ? '#51483f' : '#cfc6bb',
-      tooltipBg:     dark ? '#26221f' : '#faf7f3',
-      tooltipBorder: dark ? '#3a332e' : '#e2dcd4',
-      bg:            dark ? '#34302b' : '#e6dfd7',
-      accent:        dark ? '#14b8a6' : '#0f9d8e',
+      bg:     dark ? '#34302b' : '#e6dfd7',
+      accent: dark ? '#14b8a6' : '#0f9d8e',
     };
   }
 
-  function renderMapChart() {
-    if (!mapChart || !echarts || !graphBounds) return;
+  // CARTO's free basemaps are OpenStreetMap data with light/dark styling, so
+  // the map can follow the app's theme toggle while keeping OSM attribution.
+  const TILE_URLS = {
+    light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  };
+  const TILE_ATTRIBUTION =
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
+    '&copy; <a href="https://carto.com/attributions">CARTO</a>';
+
+  function updateTileLayer() {
+    if (!leafletMap || !L) return;
+    const wanted = $theme === 'light' ? 'light' : 'dark';
+    if (tileTheme === wanted) return;
+    if (tileLayer) leafletMap.removeLayer(tileLayer);
+    tileLayer = L.tileLayer(TILE_URLS[wanted], {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: TILE_ATTRIBUTION,
+    }).addTo(leafletMap);
+    tileLayer.bringToBack();
+    tileTheme = wanted;
+  }
+
+  // Marker radius scales with bed count, same shape as the old ECharts symbol size.
+  function hospitalRadius(h: Hospital, highlighted: boolean): number {
+    const base = 6 + Math.sqrt(h.total_beds) * 0.45;
+    return highlighted ? base * 1.4 : base;
+  }
+
+  function hospitalTooltipHtml(h: Hospital): string {
+    return `<strong>${h.name}</strong><br/>` +
+      `Region: ${h.region ?? '—'}<br/>` +
+      `Beds: ${h.available_beds}/${h.total_beds} · ICU: ${h.available_icu_beds}/${h.total_icu_beds}<br/>` +
+      `Load: ${pct(loadFactor(h) * 100)}`;
+  }
+
+  function renderHospitalMarkers() {
+    if (!leafletMap || !L || !hospitalLayer) return;
     const pal = chartPalette();
-    const b = graphBounds;
-    const padLon = (b.max_lon - b.min_lon) * 0.06;
-    const padLat = (b.max_lat - b.min_lat) * 0.06;
-
-    const series: any[] = [
-      {
-        name: 'Hospitals',
-        type: 'scatter',
-        coordinateSystem: 'cartesian2d',
-        data: hospitals.map(h => ({
-          name: h.name,
-          value: [h.longitude, h.latitude, h.total_beds],
-          hospital: h,
-          itemStyle: {
-            color: loadColor(h),
-            borderColor:
-              h.id === assignment?.assigned_hospital_id || h.id === highlightedHospitalId
-                ? pal.accent
-                : pal.bg,
-            borderWidth: h.id === assignment?.assigned_hospital_id || h.id === highlightedHospitalId ? 3 : 1.5,
-          },
-        })),
-        symbolSize: (val: number[], params: any) => {
-          const base = 9 + Math.sqrt(val[2]) * 0.6;
-          const id = params.data.hospital.id;
-          return id === assignment?.assigned_hospital_id || id === highlightedHospitalId ? base * 1.35 : base;
-        },
-        emphasis: { scale: 1.25 },
-        label: {
-          show: true,
-          formatter: (p: any) => p.data.name,
-          position: 'top',
-          fontFamily: 'var(--sans)',
-          fontSize: 10,
-          color: pal.muted,
-        },
-        z: 3,
-      },
-    ];
-
-    if (pendingLocation) {
-      series.push({
-        name: 'Emergency',
-        type: 'effectScatter',
-        coordinateSystem: 'cartesian2d',
-        data: [{ value: [pendingLocation.lon, pendingLocation.lat] }],
-        symbolSize: 16,
-        itemStyle: { color: '#c94a45' },
-        rippleEffect: { brushType: 'stroke', scale: 3, period: 2.5 },
-        z: 5,
+    hospitalLayer.clearLayers();
+    for (const h of hospitals) {
+      const highlighted = h.id === assignment?.assigned_hospital_id || h.id === highlightedHospitalId;
+      const marker = L.circleMarker([h.latitude, h.longitude], {
+        radius: hospitalRadius(h, highlighted),
+        color: highlighted ? pal.accent : pal.bg,
+        weight: highlighted ? 3 : 1.5,
+        fillColor: loadColor(h),
+        fillOpacity: 0.9,
       });
+      marker.bindTooltip(hospitalTooltipHtml(h), { direction: 'top', sticky: true, className: 'map-tooltip' });
+      // Don't let a marker click also trigger the map's "report emergency here" handler.
+      marker.on('click', (e: any) => L.DomEvent.stopPropagation(e));
+      hospitalLayer.addLayer(marker);
     }
 
+    if (!hospitalsFitted && hospitals.length) {
+      leafletMap.fitBounds(L.latLngBounds(hospitals.map(h => [h.latitude, h.longitude])), { padding: [32, 32] });
+      hospitalsFitted = true;
+    }
+  }
+
+  function renderEmergencyMarker() {
+    if (!leafletMap || !L) return;
+    if (emergencyMarker) {
+      leafletMap.removeLayer(emergencyMarker);
+      emergencyMarker = null;
+    }
+    if (!pendingLocation) return;
+    const icon = L.divIcon({
+      className: 'emergency-marker',
+      html: '<span class="emergency-marker-dot"></span><span class="emergency-marker-pulse"></span>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
+    emergencyMarker = L.marker([pendingLocation.lat, pendingLocation.lon], {
+      icon,
+      interactive: false,
+      keyboard: false,
+    }).addTo(leafletMap);
+  }
+
+  function renderRoute() {
+    if (!leafletMap || !L) return;
+    if (routeLine) {
+      leafletMap.removeLayer(routeLine);
+      routeLine = null;
+    }
     const winner = assignment?.candidates?.[0];
-    if (winner && winner.path.length > 1) {
-      series.push({
-        name: 'Route',
-        type: 'lines',
-        coordinateSystem: 'cartesian2d',
-        polyline: true,
-        data: [{ coords: winner.path.map(p => [p.longitude, p.latitude]) }],
-        lineStyle: { color: pal.accent, width: 3, opacity: 0.55 },
-        effect: {
-          show: true,
-          period: 2.5,
-          trailLength: 0.25,
-          symbol: 'arrow',
-          symbolSize: 8,
-          color: pal.accent,
-        },
-        z: 4,
-        silent: true,
-      });
-    }
+    const assignedId = assignment?.assigned_hospital_id ?? null;
+    if (!winner || winner.path.length < 2 || assignedId === null) return;
 
-    mapChart.setOption({
-      grid: { left: 8, right: 8, top: 8, bottom: 8 },
-      xAxis: {
-        type: 'value',
-        min: b.min_lon - padLon,
-        max: b.max_lon + padLon,
-        show: false,
-      },
-      yAxis: {
-        type: 'value',
-        min: b.min_lat - padLat,
-        max: b.max_lat + padLat,
-        show: false,
-      },
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: pal.tooltipBg,
-        borderColor: pal.tooltipBorder,
-        textStyle: { color: pal.text, fontSize: 12, fontFamily: 'var(--sans)' },
-        formatter: (p: any) => {
-          if (p.seriesName === 'Hospitals') {
-            const h: Hospital = p.data.hospital;
-            return `<strong>${h.name}</strong><br/>` +
-              `Region: ${h.region ?? '—'}<br/>` +
-              `Beds: ${h.available_beds}/${h.total_beds} · ICU: ${h.available_icu_beds}/${h.total_icu_beds}<br/>` +
-              `Load: ${pct(loadFactor(h) * 100)}`;
-          }
-          if (p.seriesName === 'Emergency') return 'Reported emergency location';
-          return '';
-        },
-      },
-      series,
-    }, true);
+    // The path follows the synthetic road graph used for routing/scoring, not
+    // real streets — it's drawn over real geography for orientation only.
+    const latlngs = winner.path.map(p => [p.latitude, p.longitude]);
+    routeLine = L.polyline(latlngs, {
+      color: chartPalette().accent,
+      weight: 4,
+      opacity: 0.85,
+      dashArray: '1, 10',
+      lineCap: 'round',
+      className: 'route-line',
+    }).addTo(leafletMap);
+
+    if (fittedAssignmentId !== assignedId) {
+      leafletMap.fitBounds(routeLine.getBounds(), { padding: [48, 48], maxZoom: 14 });
+      fittedAssignmentId = assignedId;
+    }
+  }
+
+  function renderMap() {
+    if (!leafletMap || !L) return;
+    updateTileLayer();
+    renderHospitalMarkers();
+    renderEmergencyMarker();
+    renderRoute();
   }
 
   // ── Reactivity ────────────────────────────────────────────────────────────
 
-  $: if (mapChart && echarts && graphBounds) {
+  $: if (leafletMap && L) {
     hospitals; pendingLocation; assignment; highlightedHospitalId; $theme;
-    renderMapChart();
+    renderMap();
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -590,18 +598,23 @@
   onMount(() => {
     if (!browser) return;
 
-    const resize = () => mapChart?.resize();
+    const resize = () => leafletMap?.invalidateSize();
     window.addEventListener('resize', resize);
 
     (async () => {
-      echarts = await import('echarts');
-      mapChart = echarts.init(mapEl, null, { renderer: 'canvas' });
+      const leafletModule: any = await import('leaflet');
+      L = leafletModule.default ?? leafletModule;
 
-      mapChart.getZr().on('click', (params: any) => {
-        const point: [number, number] = [params.offsetX, params.offsetY];
-        if (!mapChart.containPixel('grid', point)) return;
-        const [lon, lat] = mapChart.convertFromPixel('grid', point);
-        pendingLocation = { lat, lon };
+      // Default view is Mumbai; refined to the graph bounding box (and then
+      // the hospital bounds) once the data loads.
+      leafletMap = L.map(mapEl, { zoomControl: true }).setView([19.076, 72.8777], 11);
+      hospitalLayer = L.layerGroup().addTo(leafletMap);
+      updateTileLayer();
+
+      // Click anywhere on the map to report an emergency there — e.latlng
+      // gives real coordinates directly, no pixel/axis conversion needed.
+      leafletMap.on('click', (e: any) => {
+        pendingLocation = { lat: e.latlng.lat, lon: e.latlng.lng };
         panelOpen = true;
         activeCase = null;
         assignment = null;
@@ -611,7 +624,13 @@
 
       await loadAll();
       await tick();
-      renderMapChart();
+
+      if (graphBounds) {
+        const b = graphBounds;
+        leafletMap.fitBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], { padding: [20, 20] });
+      }
+      leafletMap.invalidateSize();
+      renderMap();
     })();
 
     connectWs();
@@ -620,7 +639,7 @@
   });
 
   onDestroy(() => {
-    mapChart?.dispose();
+    leafletMap?.remove();
     ws?.close();
   });
 </script>
@@ -1326,12 +1345,71 @@
     border: 1px solid var(--border-soft);
   }
   .map-canvas { width: 100%; height: 100%; }
+  .map-canvas :global(.leaflet-container) {
+    background: var(--bg-sunken);
+    font-family: var(--sans);
+  }
+  .map-canvas :global(.leaflet-control-attribution) {
+    background: var(--bg-panel);
+    color: var(--text-faint);
+    font-size: 0.6875rem;
+  }
+  .map-canvas :global(.leaflet-control-attribution a) { color: var(--text-muted); }
+  .map-canvas :global(.leaflet-bar),
+  .map-canvas :global(.leaflet-bar a) {
+    background: var(--bg-panel);
+    border-color: var(--border) !important;
+    color: var(--text);
+  }
+  .map-canvas :global(.leaflet-bar a:hover) { background: var(--bg-hover); }
+  .map-canvas :global(.map-tooltip) {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    border-radius: var(--radius-sm);
+    box-shadow: none;
+  }
+  .map-canvas :global(.map-tooltip::before) { display: none; }
+
+  /* Pulsing marker for the reported emergency location. */
+  .map-canvas :global(.emergency-marker) { position: relative; }
+  .map-canvas :global(.emergency-marker-dot),
+  .map-canvas :global(.emergency-marker-pulse) {
+    position: absolute;
+    left: 2px; top: 2px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+  }
+  .map-canvas :global(.emergency-marker-dot) {
+    background: var(--risk-severe);
+    border: 2px solid var(--bg-sunken);
+  }
+  .map-canvas :global(.emergency-marker-pulse) {
+    border: 2px solid var(--risk-severe);
+    animation: emergencyPulse 1.8s ease-out infinite;
+  }
+  @keyframes emergencyPulse {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+
+  /* Flowing dashes along the assigned route. */
+  .map-canvas :global(.route-line) {
+    animation: routeFlow 0.6s linear infinite;
+  }
+  @keyframes routeFlow {
+    to { stroke-dashoffset: -22; }
+  }
+
   .loading-bar {
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 2px;
     background: var(--border);
     overflow: hidden;
+    z-index: 1000;
   }
   .loading-bar::after {
     content: '';
@@ -1358,6 +1436,7 @@
     font-size: 0.78rem;
     color: var(--text-muted);
     pointer-events: none;
+    z-index: 1000;
   }
 
   .stat-row {
