@@ -4,6 +4,7 @@
   import { ICONS } from '$lib/icons';
   import { DISEASE_LABELS, SEVERITY_COLORS, type AlertRow, type Severity } from '$lib/constants';
   import { timeAgo, formatZ, diseaseLabel } from '$lib/format';
+  import { downloadCsv } from '$lib/csv';
 
   const SEVERITIES: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 
@@ -88,9 +89,25 @@
   $: visibleAlerts = diseaseFilter === 'all'
     ? alerts
     : alerts.filter(a => a.disease_name === diseaseFilter);
+
+  function downloadCurrentView() {
+    const rows = visibleAlerts.map(a => [
+      a.severity,
+      diseaseLabel(a.disease_name),
+      a.region ?? '',
+      a.message,
+      a.event_date ?? '',
+      formatZ(a.z_score),
+      a.created_at,
+    ]);
+    downloadCsv('alerts.csv', ['Severity', 'Disease', 'Region', 'Message', 'Event Date', 'Z-Score', 'Created At'], rows);
+  }
 </script>
 
 <PageShell section="Alerts" title="Alerts" alertCount={alerts.length}>
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="alerts-page">
     <div class="page-header">
       <h1 class="section-title">Alerts</h1>

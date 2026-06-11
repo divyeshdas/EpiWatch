@@ -4,6 +4,7 @@
   import TopTabs from '$lib/components/TopTabs.svelte';
   import { ICONS } from '$lib/icons';
   import { timeAgo } from '$lib/format';
+  import { downloadCsv } from '$lib/csv';
   import type { Hospital, EmergencyCase } from '$lib/types';
 
   const API = 'http://localhost:8000';
@@ -72,6 +73,18 @@
     return n.toFixed(4);
   }
 
+  function downloadCurrentView() {
+    const rows = sortedCases.map(c => [
+      c.created_at,
+      c.latitude,
+      c.longitude,
+      conditionLabel(c.patient_condition),
+      hospitalName(c.assigned_hospital_id),
+      statusLabel(c.status),
+    ]);
+    downloadCsv('emergency_history.csv', ['Reported At', 'Latitude', 'Longitude', 'Condition', 'Assigned Hospital', 'Status'], rows);
+  }
+
   async function loadAll() {
     loading = true;
     loadError = null;
@@ -96,6 +109,9 @@
 </script>
 
 <PageShell section="Emergency Response" title="History">
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="page">
     <TopTabs tabs={[
       { label: 'Dispatch', href: '/emergency' },

@@ -5,6 +5,7 @@
   import { ICONS } from '$lib/icons';
   import { timeAgo } from '$lib/format';
   import { loadFactor, pct } from '$lib/hospital';
+  import { downloadCsv } from '$lib/csv';
   import type { Hospital, EmergencyCase } from '$lib/types';
 
   const API = 'http://localhost:8000';
@@ -70,6 +71,16 @@
     return hospitalsById.get(id)?.region ?? '—';
   }
 
+  function downloadCurrentView() {
+    const rows = recentAssignments.map(c => [
+      c.created_at,
+      conditionLabel(c.patient_condition),
+      hospitalName(c.assigned_hospital_id),
+      hospitalRegion(c.assigned_hospital_id),
+    ]);
+    downloadCsv('dispatch_report.csv', ['Reported At', 'Condition', 'Assigned Hospital', 'Region'], rows);
+  }
+
   async function loadAll() {
     loading = true;
     loadError = null;
@@ -94,6 +105,9 @@
 </script>
 
 <PageShell section="Emergency Response" title="Reports">
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="page">
     <TopTabs tabs={[
       { label: 'Dispatch', href: '/emergency' },

@@ -75,6 +75,30 @@
 
   .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 
+  /* :global so this styles the Download/etc. buttons tab pages pass into
+     the topbar-right slot — slotted content is scoped to the parent, not
+     to PageShell. */
+  :global(.topbar-btn) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  :global(.topbar-btn:hover) { background: var(--bg-hover); color: var(--text); }
+  :global(.topbar-btn svg) { width: 14px; height: 14px; }
+
+  @media (max-width: 720px) {
+    :global(.topbar-btn span) { display: none; }
+  }
+
   .content {
     flex: 1;
     padding: var(--page-pad);

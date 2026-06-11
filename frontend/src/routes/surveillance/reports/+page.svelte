@@ -4,6 +4,7 @@
   import TopTabs from '$lib/components/TopTabs.svelte';
   import { ICONS } from '$lib/icons';
   import { fmt, monthYear, timeAgo } from '$lib/format';
+  import { downloadCsv } from '$lib/csv';
 
   const API = 'http://localhost:8000/surveillance';
 
@@ -126,12 +127,26 @@
     }
   }
 
+  function downloadCurrentView() {
+    const rows = summaries.map(s => [
+      diseaseLabel(s.disease_name),
+      s.total_cases,
+      s.total_deaths,
+      s.peak_cases,
+      s.peak_date ? monthYear(s.peak_date) : '',
+    ]);
+    downloadCsv('disease_summary.csv', ['Disease', 'Total Cases', 'Total Deaths', 'Peak Cases', 'Peak Month'], rows);
+  }
+
   onMount(() => {
     loadAll();
   });
 </script>
 
 <PageShell section="Surveillance" title="Reports">
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="page">
     <TopTabs tabs={[
       { label: 'Overview', href: '/surveillance' },

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/stores';
   import { theme } from '$lib/stores/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TopTabs from '$lib/components/TopTabs.svelte';
+  import { downloadCsv } from '$lib/csv';
   import 'leaflet/dist/leaflet.css';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -191,6 +193,21 @@
   // Topbar search — highlights a matching hospital on the map and in the table.
   let searchQuery = '';
   let highlightedHospitalId: number | null = null;
+  let searchFocused = false;
+  let debouncedQuery = '';
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Topbar filters popover — filters the Hospital Network table (and its
+  // CSV export) by load and specialization.
+  let filtersOpen = false;
+  let loadFilter: 'all' | 'available' | 'busy' | 'critical' = 'all';
+  let specializationFilter = 'all';
+
+  // Topbar share — copies the current view (highlighted hospital + filters)
+  // as a URL; restored by the param-read block below on load.
+  let shareCopied = false;
+  let shareCopyTimer: ReturnType<typeof setTimeout> | null = null;
+  let appliedShareParams = false;
 
   let ws: WebSocket | null = null;
   let wsConnected = false;
@@ -224,6 +241,57 @@
   };
 
   $: hospitalsById = new Map(hospitals.map(h => [h.id, h]));
+
+  // ── Topbar search / filters / share ──────────────────────────────────────
+
+  $: {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    const q = searchQuery;
+    searchDebounceTimer = setTimeout(() => { debouncedQuery = q; }, 200);
+  }
+
+  type HospitalMatch = { id: number; label: string; sub: string };
+
+  $: searchMatches = ((): HospitalMatch[] => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return [];
+    return hospitals
+      .filter(h => h.name.toLowerCase().includes(q) || (h.region ?? '').toLowerCase().includes(q))
+      .slice(0, 8)
+      .map(h => ({ id: h.id, label: h.name, sub: h.region ?? '—' }));
+  })();
+
+  $: searchOpen = searchFocused && searchQuery.trim().length > 0;
+
+  $: specializations = Array.from(new Set(hospitals.flatMap(h => h.specializations))).sort();
+
+  function loadBucket(h: Hospital): 'available' | 'busy' | 'critical' {
+    const lf = loadFactor(h);
+    if (lf >= 0.85) return 'critical';
+    if (lf >= 0.6) return 'busy';
+    return 'available';
+  }
+
+  $: filteredHospitals = hospitals.filter(h => {
+    if (loadFilter !== 'all' && loadBucket(h) !== loadFilter) return false;
+    if (specializationFilter !== 'all' && !h.specializations.includes(specializationFilter)) return false;
+    return true;
+  });
+
+  // Restore a shared view (?hospital=&load=&spec=) once the map and hospital
+  // list are both ready.
+  $: if (!appliedShareParams && leafletMap && hospitals.length) {
+    appliedShareParams = true;
+    const hParam = $page.url.searchParams.get('hospital');
+    if (hParam) {
+      const id = Number(hParam);
+      if (!Number.isNaN(id) && hospitalsById.has(id)) focusHospital(id);
+    }
+    const loadParam = $page.url.searchParams.get('load');
+    if (loadParam === 'available' || loadParam === 'busy' || loadParam === 'critical') loadFilter = loadParam;
+    const specParam = $page.url.searchParams.get('spec');
+    if (specParam && specializations.includes(specParam)) specializationFilter = specParam;
+  }
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -457,17 +525,64 @@
     return hospitalsById.get(id)?.name ?? `#${id}`;
   }
 
-  function handleSearch(e: KeyboardEvent) {
-    if (e.key !== 'Enter') return;
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) {
-      highlightedHospitalId = null;
-      return;
+  // Highlights a hospital on the map and table, panning/zooming the map to it.
+  function focusHospital(id: number) {
+    highlightedHospitalId = id;
+    const h = hospitalsById.get(id);
+    if (h && leafletMap) {
+      leafletMap.setView([h.latitude, h.longitude], Math.max(leafletMap.getZoom(), 13));
     }
-    const match = hospitals.find(h =>
-      h.name.toLowerCase().includes(q) || (h.region ?? '').toLowerCase().includes(q)
-    );
-    highlightedHospitalId = match?.id ?? null;
+  }
+
+  function selectSearchMatch(m: HospitalMatch) {
+    focusHospital(m.id);
+    searchQuery = '';
+    searchFocused = false;
+  }
+
+  function handleSearch(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      if (searchMatches.length) selectSearchMatch(searchMatches[0]);
+      else highlightedHospitalId = null;
+    } else if (e.key === 'Escape') {
+      searchQuery = '';
+      searchFocused = false;
+    }
+  }
+
+  // Download → CSV export of the Hospital Network table, respecting the
+  // active load/specialization filters.
+  function downloadCurrentView() {
+    const rows = filteredHospitals.map(h => [
+      h.name,
+      h.region ?? '',
+      h.available_beds,
+      h.total_beds,
+      h.available_icu_beds,
+      h.total_icu_beds,
+      Math.round(loadFactor(h) * 100),
+      h.specializations.join('; '),
+    ]);
+    const parts = ['hospitals'];
+    if (loadFilter !== 'all') parts.push(loadFilter);
+    if (specializationFilter !== 'all') parts.push(specializationFilter.toLowerCase().replace(/\s+/g, '_'));
+    downloadCsv(`${parts.join('_')}.csv`, [
+      'Hospital', 'Region', 'Beds Available', 'Beds Total', 'ICU Available', 'ICU Total', 'Load %', 'Specializations',
+    ], rows);
+  }
+
+  // Share → encode the current highlighted hospital + filters as URL params
+  // and copy the link to the clipboard.
+  async function shareView() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    if (highlightedHospitalId !== null) url.searchParams.set('hospital', String(highlightedHospitalId));
+    if (loadFilter !== 'all') url.searchParams.set('load', loadFilter);
+    if (specializationFilter !== 'all') url.searchParams.set('spec', specializationFilter);
+    await navigator.clipboard.writeText(url.toString());
+    shareCopied = true;
+    if (shareCopyTimer) clearTimeout(shareCopyTimer);
+    shareCopyTimer = setTimeout(() => { shareCopied = false; }, 2000);
   }
 
   // ── Map (Leaflet) ──────────────────────────────────────────────────────────
@@ -777,17 +892,58 @@
           placeholder="Search hospital or region…"
           bind:value={searchQuery}
           on:keydown={handleSearch}
+          on:focus={() => searchFocused = true}
+          on:blur={() => setTimeout(() => searchFocused = false, 150)}
         />
         <span class="kbd">↵</span>
+        {#if searchOpen}
+          <div class="search-dropdown">
+            {#if searchMatches.length === 0}
+              <div class="search-empty">No hospitals or regions match "{searchQuery}"</div>
+            {:else}
+              {#each searchMatches as m, i (m.id)}
+                <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
+                  <span class="search-match-label">{m.label}</span>
+                  <span class="search-match-sub">{m.sub}</span>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </div>
       <div class="topbar-right">
         <div class="data-updated">
           <span class="ws-dot {wsConnected ? 'connected' : ''}"></span>
           Data updated {lastUpdated ? timeAgo(lastUpdated.toISOString()) : '—'}
         </div>
-        <button class="topbar-btn">{@html ICONS.share}<span>Share</span></button>
-        <button class="topbar-btn">{@html ICONS.download}<span>Download</span></button>
-        <button class="topbar-btn">{@html ICONS.filter}<span>Filters</span></button>
+        <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
+        <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+        <div class="topbar-action">
+          <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
+          {#if filtersOpen}
+            <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
+            <div class="filters-popover">
+              <label class="filter-field">
+                <span>Hospital load</span>
+                <select class="quiet-select" bind:value={loadFilter}>
+                  <option value="all">All</option>
+                  <option value="available">Available (&lt;60%)</option>
+                  <option value="busy">Busy (60–85%)</option>
+                  <option value="critical">Critical (&gt;85%)</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Specialization</span>
+                <select class="quiet-select" bind:value={specializationFilter}>
+                  <option value="all">All</option>
+                  {#each specializations as s}
+                    <option value={s}>{s}</option>
+                  {/each}
+                </select>
+              </label>
+            </div>
+          {/if}
+        </div>
         <button
           class="icon-btn panel-toggle-btn"
           aria-label="Open dispatch panel"
@@ -888,8 +1044,8 @@
               <div class="hospital-table-head">
                 <span>Hospital</span><span>Region</span><span>Beds</span><span>ICU</span><span>Load</span>
               </div>
-              {#each hospitals as h (h.id)}
-                <div class="hospital-row {h.id === assignment?.assigned_hospital_id ? 'active' : ''}">
+              {#each filteredHospitals as h (h.id)}
+                <div class="hospital-row {h.id === assignment?.assigned_hospital_id || h.id === highlightedHospitalId ? 'active' : ''}">
                   <span class="hospital-name">
                     {h.name}
                     {#if h.specializations.length}
@@ -918,6 +1074,8 @@
               {/each}
               {#if hospitals.length === 0}
                 <div class="empty-note">Loading hospital network…</div>
+              {:else if filteredHospitals.length === 0}
+                <div class="empty-note">No hospitals match the current filters.</div>
               {/if}
             </div>
           </section>
@@ -1171,6 +1329,7 @@
   .icon-btn :global(svg) { width: 16px; height: 16px; }
 
   .search-box {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1201,6 +1360,48 @@
     border-radius: 4px;
     padding: 1px 5px;
     flex-shrink: 0;
+  }
+
+  .search-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    z-index: 30;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .search-match {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 0.83rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .search-match:last-child { border-bottom: none; }
+  .search-match:hover, .search-match.top { background: var(--bg-hover); }
+  .search-match-sub {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .search-empty {
+    padding: 10px 12px;
+    font-size: 0.83rem;
+    color: var(--text-faint);
   }
 
   .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
@@ -1243,6 +1444,48 @@
   }
   .topbar-btn:hover { background: var(--bg-hover); color: var(--text); }
   .topbar-btn :global(svg) { width: 14px; height: 14px; }
+  .topbar-btn.active { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
+
+  .topbar-action { position: relative; }
+  .popover-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+  }
+  .filters-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 200px;
+  }
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .quiet-select {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
 
   /* ── Content layout ───────────────────────────────────────────────────── */
 

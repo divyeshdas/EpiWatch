@@ -5,6 +5,7 @@
   import { ICONS } from '$lib/icons';
   import type { Hospital } from '$lib/types';
   import { loadFactor, loadColor, occupancyColor, availabilityPct, pct } from '$lib/hospital';
+  import { downloadCsv } from '$lib/csv';
 
   const API = 'http://localhost:8000';
 
@@ -43,6 +44,22 @@
     return 0;
   });
 
+  function downloadCurrentView() {
+    const rows = sortedHospitals.map(h => [
+      h.name,
+      h.region ?? '',
+      h.available_beds,
+      h.total_beds,
+      h.available_icu_beds,
+      h.total_icu_beds,
+      Math.round(loadFactor(h) * 100),
+      h.specializations.join('; '),
+    ]);
+    downloadCsv('hospitals.csv', [
+      'Hospital', 'Region', 'Beds Available', 'Beds Total', 'ICU Available', 'ICU Total', 'Load %', 'Specializations',
+    ], rows);
+  }
+
   async function loadHospitals() {
     loading = true;
     loadError = null;
@@ -63,6 +80,9 @@
 </script>
 
 <PageShell section="Emergency Response" title="Hospitals">
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="page">
     <TopTabs tabs={[
       { label: 'Dispatch', href: '/emergency' },

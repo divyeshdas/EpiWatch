@@ -5,6 +5,7 @@
   import { theme } from '$lib/stores/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TopTabs from '$lib/components/TopTabs.svelte';
+  import { downloadCsv } from '$lib/csv';
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,9 @@
     MEDIUM: '#a8893f',
     HIGH: '#b96532',
     CRITICAL: '#c94a45',
+  };
+  const SEVERITY_LABELS: Record<Severity, string> = {
+    LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High', CRITICAL: 'Critical',
   };
   const SEVERITY_MARK_SIZE: Record<Severity, number> = {
     LOW: 7, MEDIUM: 10, HIGH: 13, CRITICAL: 17,
@@ -229,8 +233,22 @@
   // Trends panel
   let trendMetric: 'cases' | 'deaths' = 'cases';
 
-  // Search box (top bar) — jumps the map/selection to a matching country.
+  // Search box (top bar) — jumps the map/selection to a matching disease or country.
   let searchQuery = '';
+  let searchFocused = false;
+  let debouncedQuery = '';
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Topbar filters popover — these drive the same map/alert filters the page
+  // already has, plus a new alert-severity filter.
+  let filtersOpen = false;
+  let alertSeverityFilter: 'all' | Severity = 'all';
+
+  // Topbar share — encodes the current region/disease/filters as URL params,
+  // restored by the one-shot reactive block below on load.
+  let shareCopied = false;
+  let shareCopyTimer: ReturnType<typeof setTimeout> | null = null;
+  let appliedShareParams = false;
 
   // Spike detection / alert feed
   let alerts: AlertRow[] = [];
@@ -367,6 +385,49 @@
     const d = $page.url.searchParams.get('disease');
     if (d && diseases.some(x => x.disease_name === d)) mapDiseaseFilter = d;
   }
+
+  // Restore a shared view (?region=&disease=&risk=&severity=) once the
+  // country data has loaded. One-shot — afterwards the user's own filter
+  // changes take over.
+  $: if (!appliedShareParams && countryEntries.length) {
+    appliedShareParams = true;
+    const region = $page.url.searchParams.get('region');
+    const target = region && countryEntries.find(c => c.country === region);
+    if (target) {
+      selectedCountry = target.country;
+      panelOpen = true;
+      const d = $page.url.searchParams.get('disease');
+      if (d && target.diseases.some(x => x.disease === d)) selectedCountryDisease = d;
+    }
+    const risk = $page.url.searchParams.get('risk');
+    if (risk === 'LOW' || risk === 'MODERATE' || risk === 'HIGH' || risk === 'SEVERE') mapRiskFilter = risk;
+    const severity = $page.url.searchParams.get('severity');
+    if (severity === 'LOW' || severity === 'MEDIUM' || severity === 'HIGH' || severity === 'CRITICAL') alertSeverityFilter = severity;
+  }
+
+  // ── Topbar search ──────────────────────────────────────────────────────────
+
+  $: {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    const q = searchQuery;
+    searchDebounceTimer = setTimeout(() => { debouncedQuery = q; }, 200);
+  }
+
+  type SearchMatch = { kind: 'disease' | 'country'; id: string; label: string; sub: string };
+
+  $: searchMatches = ((): SearchMatch[] => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return [];
+    const diseaseMatches: SearchMatch[] = diseases
+      .filter(d => diseaseLabel(d.disease_name).toLowerCase().includes(q) || d.disease_name.toLowerCase().includes(q))
+      .map(d => ({ kind: 'disease', id: d.disease_name, label: diseaseLabel(d.disease_name), sub: 'Disease' }));
+    const countryMatches: SearchMatch[] = countryEntries
+      .filter(c => c.country.toLowerCase().includes(q))
+      .map(c => ({ kind: 'country', id: c.country, label: c.country, sub: `${RISK_LABELS[c.riskLevel]} risk` }));
+    return [...diseaseMatches, ...countryMatches].slice(0, 8);
+  })();
+
+  $: searchOpen = searchFocused && searchQuery.trim().length > 0;
 
   $: recommendedActions = selectedEntry ? buildRecommendedActions(selectedEntry) : [];
 
@@ -515,13 +576,56 @@
     panelOpen = true;
   }
 
+  function onRegionFilterChange(e: Event) {
+    selectCountry((e.target as HTMLSelectElement).value);
+  }
+
+  function selectSearchMatch(m: SearchMatch) {
+    if (m.kind === 'disease') {
+      mapDiseaseFilter = m.id;
+    } else {
+      selectCountry(m.id);
+    }
+    searchQuery = '';
+    searchFocused = false;
+  }
+
   function handleSearch(e: KeyboardEvent) {
-    if (e.key !== 'Enter') return;
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return;
-    const match = countryEntries.find(c => c.country.toLowerCase().includes(q))
-      ?? countryEntries.find(c => c.diseases.some(d => diseaseLabel(d.disease).toLowerCase().includes(q)));
-    if (match) selectedCountry = match.country;
+    if (e.key === 'Enter') {
+      if (searchMatches.length) selectSearchMatch(searchMatches[0]);
+    } else if (e.key === 'Escape') {
+      searchQuery = '';
+      searchFocused = false;
+    }
+  }
+
+  // Download → CSV export of the currently-viewed time series (the country
+  // detail panel's selected disease), falling back to the global hotspots
+  // table if nothing is selected yet.
+  function downloadCurrentView() {
+    if (selectedEntry && selectedDiseaseSeries) {
+      const region = selectedEntry.country.toLowerCase().replace(/\s+/g, '_');
+      const rows = selectedDiseaseSeries.series.map(p => [p.date, p.case_count, p.deaths]);
+      downloadCsv(`${selectedCountryDisease}_${region}_timeseries.csv`, ['Date', 'Cases', 'Deaths'], rows);
+    } else {
+      const rows = topHotspots.map(h => [h.country, diseaseLabel(h.disease), h.latestCases, formatZ(h.topSpike?.z_score ?? null), h.topSpike?.severity ?? '—']);
+      downloadCsv('hotspots.csv', ['Country', 'Disease', 'Cases', 'Z-Score', 'Severity'], rows);
+    }
+  }
+
+  // Share → encode the current region/disease + active filters as URL params
+  // and copy the link to the clipboard.
+  async function shareView() {
+    const url = new URL(window.location.href);
+    url.search = '';
+    if (selectedCountry) url.searchParams.set('region', selectedCountry);
+    if (selectedCountryDisease) url.searchParams.set('disease', selectedCountryDisease);
+    if (mapRiskFilter !== 'all') url.searchParams.set('risk', mapRiskFilter);
+    if (alertSeverityFilter !== 'all') url.searchParams.set('severity', alertSeverityFilter);
+    await navigator.clipboard.writeText(url.toString());
+    shareCopied = true;
+    if (shareCopyTimer) clearTimeout(shareCopyTimer);
+    shareCopyTimer = setTimeout(() => { shareCopied = false; }, 2000);
   }
 
   // ── ECharts ────────────────────────────────────────────────────────────────
@@ -928,17 +1032,75 @@
           placeholder="Search disease, country, or region…"
           bind:value={searchQuery}
           on:keydown={handleSearch}
+          on:focus={() => searchFocused = true}
+          on:blur={() => setTimeout(() => searchFocused = false, 150)}
         />
         <span class="kbd">↵</span>
+        {#if searchOpen}
+          <div class="search-dropdown">
+            {#if searchMatches.length === 0}
+              <div class="search-empty">No diseases, countries, or regions match "{searchQuery}"</div>
+            {:else}
+              {#each searchMatches as m, i (m.kind + m.id)}
+                <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
+                  <span class="search-match-label">{m.label}</span>
+                  <span class="search-match-sub">{m.sub}</span>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </div>
       <div class="topbar-right">
         <div class="data-updated">
           <span class="ws-dot {wsConnected ? 'connected' : ''}"></span>
           Data updated {lastUpdated ? timeAgo(lastUpdated.toISOString()) : '—'}
         </div>
-        <button class="topbar-btn">{@html ICONS.share}<span>Share</span></button>
-        <button class="topbar-btn">{@html ICONS.download}<span>Download</span></button>
-        <button class="topbar-btn">{@html ICONS.filter}<span>Filters</span></button>
+        <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
+        <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+        <div class="topbar-action">
+          <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
+          {#if filtersOpen}
+            <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
+            <div class="filters-popover">
+              <label class="filter-field">
+                <span>Disease</span>
+                <select class="quiet-select" bind:value={mapDiseaseFilter}>
+                  <option value="all">All Diseases</option>
+                  {#each diseases as d}
+                    <option value={d.disease_name}>{diseaseLabel(d.disease_name)}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Risk Level</span>
+                <select class="quiet-select" bind:value={mapRiskFilter}>
+                  <option value="all">All Risk Levels</option>
+                  {#each Object.entries(RISK_LABELS) as [lvl, label]}
+                    <option value={lvl}>{label}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Region</span>
+                <select class="quiet-select" value={selectedCountry} on:change={onRegionFilterChange}>
+                  {#each countryEntries as c}
+                    <option value={c.country}>{c.country}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Alert Severity</span>
+                <select class="quiet-select" bind:value={alertSeverityFilter}>
+                  <option value="all">All Severities</option>
+                  {#each Object.entries(SEVERITY_LABELS) as [sev, label]}
+                    <option value={sev}>{label}</option>
+                  {/each}
+                </select>
+              </label>
+            </div>
+          {/if}
+        </div>
         <button
           class="icon-btn panel-toggle-btn"
           aria-label="Open country intelligence panel"
@@ -1171,7 +1333,7 @@
             </div>
             {#if scanMessage}<div class="scan-msg">{scanMessage}</div>{/if}
             <div class="alert-list">
-              {#each alerts.filter(a => a.region === entry.country).slice(0, 5) as a (a.id)}
+              {#each alerts.filter(a => a.region === entry.country && (alertSeverityFilter === 'all' || a.severity === alertSeverityFilter)).slice(0, 5) as a (a.id)}
                 <div
                   class="alert-item {newAlertIds.has(a.id) ? (a.severity === 'HIGH' || a.severity === 'CRITICAL' ? 'alert-pulse' : 'alert-fade') : ''}"
                   style="--sev: {SEVERITY_COLORS[a.severity]}"
@@ -1183,8 +1345,8 @@
                   <div class="alert-msg">{a.message}</div>
                 </div>
               {/each}
-              {#if alerts.filter(a => a.region === entry.country).length === 0}
-                <div class="empty-note">No alerts for {entry.country} yet.</div>
+              {#if alerts.filter(a => a.region === entry.country && (alertSeverityFilter === 'all' || a.severity === alertSeverityFilter)).length === 0}
+                <div class="empty-note">No {alertSeverityFilter === 'all' ? '' : SEVERITY_LABELS[alertSeverityFilter].toLowerCase() + ' '}alerts for {entry.country} yet.</div>
               {/if}
             </div>
           </div>
@@ -1256,6 +1418,7 @@
   .icon-btn :global(svg) { width: 16px; height: 16px; }
 
   .search-box {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1286,6 +1449,48 @@
     border-radius: 4px;
     padding: 1px 5px;
     flex-shrink: 0;
+  }
+
+  .search-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    z-index: 30;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .search-match {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 0.83rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .search-match:last-child { border-bottom: none; }
+  .search-match:hover, .search-match.top { background: var(--bg-hover); }
+  .search-match-sub {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .search-empty {
+    padding: 10px 12px;
+    font-size: 0.83rem;
+    color: var(--text-faint);
   }
 
   .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
@@ -1328,6 +1533,38 @@
   }
   .topbar-btn:hover { background: var(--bg-hover); color: var(--text); }
   .topbar-btn :global(svg) { width: 14px; height: 14px; }
+  .topbar-btn.active { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
+
+  .topbar-action { position: relative; }
+  .popover-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+  }
+  .filters-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 200px;
+  }
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
 
   /* ── Content layout ───────────────────────────────────────────────────── */
 

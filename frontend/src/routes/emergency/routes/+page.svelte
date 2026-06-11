@@ -5,6 +5,7 @@
   import { ICONS } from '$lib/icons';
   import { timeAgo } from '$lib/format';
   import { fmtKm, fmtMin } from '$lib/hospital';
+  import { downloadCsv } from '$lib/csv';
   import type { Hospital, EmergencyCase, RouteResponse } from '$lib/types';
 
   const API = 'http://localhost:8000';
@@ -77,6 +78,21 @@
     computing = false;
   }
 
+  function downloadCurrentView() {
+    const data = rows.map(r => [
+      r.case.created_at,
+      r.case.latitude,
+      r.case.longitude,
+      r.hospital?.name ?? `#${r.case.assigned_hospital_id}`,
+      r.distance_m !== null ? (r.distance_m / 1000).toFixed(2) : '',
+      r.travel_time_s !== null ? (r.travel_time_s / 60).toFixed(1) : '',
+      r.node_count ?? '',
+      algo,
+      r.reason ?? '',
+    ]);
+    downloadCsv(`routes_${algo}.csv`, ['Reported At', 'Origin Lat', 'Origin Lon', 'Hospital', 'Distance (km)', 'ETA (min)', 'Nodes', 'Algorithm', 'Reason'], data);
+  }
+
   async function loadAll() {
     loading = true;
     loadError = null;
@@ -112,6 +128,9 @@
 </script>
 
 <PageShell section="Emergency Response" title="Routes">
+  <svelte:fragment slot="topbar-right">
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+  </svelte:fragment>
   <div class="page">
     <TopTabs tabs={[
       { label: 'Dispatch', href: '/emergency' },
