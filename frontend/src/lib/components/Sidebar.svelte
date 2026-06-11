@@ -26,6 +26,11 @@
   <nav class="sidebar-nav">
     <a href="/surveillance" class="nav-item {path === '/surveillance' ? 'active' : ''}">{@html ICONS.surveillance}<span>Overview</span></a>
     <a href="/emergency" class="nav-item {path === '/emergency' ? 'active' : ''}">{@html ICONS.truck}<span>Emergency Response</span></a>
+    <a href="/alerts" class="nav-item {path === '/alerts' ? 'active' : ''}">
+      {@html ICONS.bell}<span>Alerts</span>
+      {#if alertCount}<span class="nav-badge">{alertCount}</span>{/if}
+    </a>
+    <a href="/data-explorer" class="nav-item {path === '/data-explorer' ? 'active' : ''}">{@html ICONS.database}<span>Data Explorer</span></a>
     <a href="/global-map" class="nav-item {path === '/global-map' ? 'active' : ''}">
       {@html ICONS.globe}<span>Global Map</span>
       <span class="soon-badge">Soon</span>
@@ -38,11 +43,6 @@
       {@html ICONS.activity}<span>Diseases</span>
       <span class="soon-badge">Soon</span>
     </a>
-    <a href="/alerts" class="nav-item {path === '/alerts' ? 'active' : ''}">
-      {@html ICONS.bell}<span>Alerts</span>
-      {#if alertCount}<span class="nav-badge">{alertCount}</span>{/if}
-    </a>
-    <a href="/data-explorer" class="nav-item {path === '/data-explorer' ? 'active' : ''}">{@html ICONS.database}<span>Data Explorer</span></a>
     <a href="/reports" class="nav-item {path === '/reports' ? 'active' : ''}">
       {@html ICONS.file}<span>Reports</span>
       <span class="soon-badge">Soon</span>
