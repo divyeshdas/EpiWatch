@@ -9,6 +9,7 @@
   import { downloadCsv } from '$lib/csv';
   import { ICONS } from '$lib/icons';
   import { sidebarCollapsed, toggleSidebar } from '$lib/stores/sidebar';
+  import { API_BASE, WS_BASE } from '$lib/api';
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@
 
   // ── Constants ──────────────────────────────────────────────────────────────
 
-  const API = 'http://localhost:8000/surveillance';
+  const API = `${API_BASE}/surveillance`;
 
   // Restrained, fixed per-disease colors — kept consistent everywhere a
   // disease is shown (trend lines, disease table, hotspot bars).
@@ -422,7 +423,7 @@
   // ── Alerts + live feed ──────────────────────────────────────────────────────
 
   async function loadAlerts() {
-    const r = await fetch('http://localhost:8000/alerts?limit=30');
+    const r = await fetch(`${API_BASE}/alerts?limit=30`);
     if (r.ok) alerts = await r.json();
   }
 
@@ -438,7 +439,7 @@
   }
 
   function connectWs() {
-    ws = new WebSocket('ws://localhost:8000/ws');
+    ws = new WebSocket(`${WS_BASE}/ws`);
     ws.onopen = () => { wsConnected = true; };
     ws.onclose = () => {
       wsConnected = false;

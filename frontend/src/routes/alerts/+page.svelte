@@ -5,6 +5,7 @@
   import { DISEASE_LABELS, SEVERITY_COLORS, type AlertRow, type Severity } from '$lib/constants';
   import { timeAgo, formatZ, diseaseLabel } from '$lib/format';
   import { downloadCsv } from '$lib/csv';
+  import { API_BASE, WS_BASE } from '$lib/api';
 
   const SEVERITIES: Severity[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 
@@ -26,7 +27,7 @@
       const params = new URLSearchParams({ limit: '100' });
       if (severityFilter !== 'all') params.set('severity', severityFilter);
       if (typeFilter !== 'all') params.set('type', typeFilter);
-      const r = await fetch(`http://localhost:8000/alerts?${params}`);
+      const r = await fetch(`${API_BASE}/alerts?${params}`);
       if (!r.ok) throw new Error('request failed');
       alerts = await r.json();
     } catch {
@@ -48,7 +49,7 @@
   }
 
   function connectWs() {
-    ws = new WebSocket('ws://localhost:8000/ws');
+    ws = new WebSocket(`${WS_BASE}/ws`);
     ws.onopen = () => { wsConnected = true; };
     ws.onclose = () => {
       wsConnected = false;

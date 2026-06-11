@@ -7,8 +7,9 @@
   import { loadFactor, pct } from '$lib/hospital';
   import { downloadCsv } from '$lib/csv';
   import type { Hospital, EmergencyCase } from '$lib/types';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000';
+  const API = API_BASE;
 
   type PatientCondition = 'STABLE' | 'SERIOUS' | 'CRITICAL' | 'CARDIAC';
 

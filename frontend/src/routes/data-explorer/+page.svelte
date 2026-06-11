@@ -6,8 +6,9 @@
   import { ICONS } from '$lib/icons';
   import { DISEASE_COLORS } from '$lib/constants';
   import { diseaseLabel, fmt, monthYear } from '$lib/format';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000/surveillance';
+  const API = `${API_BASE}/surveillance`;
 
   type DiseaseInfo = {
     disease_name: string;

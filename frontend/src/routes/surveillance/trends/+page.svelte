@@ -7,8 +7,9 @@
   import { ICONS } from '$lib/icons';
   import { fmt } from '$lib/format';
   import { downloadCsv } from '$lib/csv';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000/surveillance';
+  const API = `${API_BASE}/surveillance`;
 
   // Restrained, fixed per-disease colors — kept consistent with the
   // Surveillance overview (trend lines, disease table, hotspot bars).

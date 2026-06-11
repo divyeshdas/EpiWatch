@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { AlertRow } from '$lib/constants';
   import { diseaseLabel, formatZ, monthYear } from '$lib/format';
+  import { API_BASE, WS_BASE } from '$lib/api';
 
   // Ticker-specific severity dots — distinct from the SEVERITY_COLORS used
   // for alert badges elsewhere, per the visual-polish spec.
@@ -17,7 +18,7 @@
 
   async function load() {
     try {
-      const r = await fetch('http://localhost:8000/alerts?limit=12');
+      const r = await fetch(`${API_BASE}/alerts?limit=12`);
       if (r.ok) alerts = await r.json();
     } catch {
       // Network/API unavailable — ticker falls back to the calm empty state.
@@ -30,7 +31,7 @@
   }
 
   function connectWs() {
-    ws = new WebSocket('ws://localhost:8000/ws');
+    ws = new WebSocket(`${WS_BASE}/ws`);
     ws.onclose = () => setTimeout(connectWs, 2000);
     ws.onerror = () => ws?.close();
     ws.onmessage = (msg: MessageEvent) => {

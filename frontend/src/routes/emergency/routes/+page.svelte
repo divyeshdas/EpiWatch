@@ -7,8 +7,9 @@
   import { fmtKm, fmtMin } from '$lib/hospital';
   import { downloadCsv } from '$lib/csv';
   import type { Hospital, EmergencyCase, RouteResponse } from '$lib/types';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000';
+  const API = API_BASE;
 
   // Most recent assigned emergencies to compute routes for — keeps the
   // number of /route calls bounded.

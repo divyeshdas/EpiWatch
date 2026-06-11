@@ -9,6 +9,7 @@
   import { downloadCsv } from '$lib/csv';
   import { ICONS } from '$lib/icons';
   import { sidebarCollapsed, toggleSidebar } from '$lib/stores/sidebar';
+  import { API_BASE, WS_BASE } from '$lib/api';
   import 'leaflet/dist/leaflet.css';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -79,7 +80,7 @@
 
   // ── Constants ──────────────────────────────────────────────────────────────
 
-  const API = 'http://localhost:8000';
+  const API = API_BASE;
 
   const CONDITIONS: PatientCondition[] = ['STABLE', 'SERIOUS', 'CRITICAL', 'CARDIAC'];
 
@@ -387,7 +388,7 @@
   }
 
   function connectWs() {
-    ws = new WebSocket('ws://localhost:8000/ws');
+    ws = new WebSocket(`${WS_BASE}/ws`);
     ws.onopen = () => { wsConnected = true; };
     ws.onclose = () => {
       wsConnected = false;

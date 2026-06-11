@@ -5,8 +5,9 @@
   import { ICONS } from '$lib/icons';
   import { fmt, monthYear, timeAgo } from '$lib/format';
   import { downloadCsv } from '$lib/csv';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000/surveillance';
+  const API = `${API_BASE}/surveillance`;
 
   type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -113,7 +114,7 @@
       const [summaryRes, hotspotsRes, alertsRes] = await Promise.all([
         fetch(`${API}/summary`),
         fetch(`${API}/hotspots`),
-        fetch(`http://localhost:8000/alerts?limit=100`),
+        fetch(`${API_BASE}/alerts?limit=100`),
       ]);
       if (!summaryRes.ok || !hotspotsRes.ok || !alertsRes.ok) throw new Error('failed');
       summaries = await summaryRes.json();

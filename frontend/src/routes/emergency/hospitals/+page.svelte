@@ -6,8 +6,9 @@
   import type { Hospital } from '$lib/types';
   import { loadFactor, loadColor, occupancyColor, availabilityPct, pct } from '$lib/hospital';
   import { downloadCsv } from '$lib/csv';
+  import { API_BASE } from '$lib/api';
 
-  const API = 'http://localhost:8000';
+  const API = API_BASE;
 
   let hospitals: Hospital[] = [];
   let loading = true;
