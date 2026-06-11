@@ -3,6 +3,7 @@
   import { browser } from '$app/environment';
   import { theme } from '$lib/stores/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import TopTabs from '$lib/components/TopTabs.svelte';
   import 'leaflet/dist/leaflet.css';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -798,13 +799,13 @@
     <div class="content">
       <div class="content-main">
 
-        <div class="tabs">
-          <span class="tab active">Dispatch</span>
-          <span class="tab inert">Hospitals</span>
-          <span class="tab inert">History</span>
-          <span class="tab inert">Routes</span>
-          <span class="tab inert">Reports</span>
-        </div>
+        <TopTabs tabs={[
+          { label: 'Dispatch', href: '/emergency' },
+          { label: 'Hospitals', href: '/emergency/hospitals' },
+          { label: 'History', href: '/emergency/history' },
+          { label: 'Routes', href: '/emergency/routes' },
+          { label: 'Reports', href: '/emergency/reports' },
+        ]} />
 
         {#if loadError}
           <div class="error-banner">{@html ICONS.bell}{loadError}</div>
@@ -1259,21 +1260,6 @@
     flex-direction: column;
     gap: 16px;
   }
-
-  .tabs {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .tab {
-    padding: 8px 14px;
-    font-size: 0.83rem;
-    color: var(--text-muted);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
-  .tab.inert { opacity: 0.45; }
 
   .error-banner {
     display: flex;

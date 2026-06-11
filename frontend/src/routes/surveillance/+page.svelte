@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/stores';
   import { theme } from '$lib/stores/theme';
   import Sidebar from '$lib/components/Sidebar.svelte';
+  import TopTabs from '$lib/components/TopTabs.svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -357,6 +359,14 @@
       return { ...c, riskScore: ds.riskScore, riskLevel: riskLevelFor(ds.riskScore), pctChange: ds.pctChange, anomalyZ: ds.topSpike?.z_score ?? null, hasData: true };
     })
     .filter(c => mapRiskFilter === 'all' || c.riskLevel === mapRiskFilter);
+
+  // Deep-link from the Diseases tab (/surveillance?disease=<slug>) —
+  // pre-selects that disease in the Global Risk Map filter once the
+  // diseases list has loaded.
+  $: {
+    const d = $page.url.searchParams.get('disease');
+    if (d && diseases.some(x => x.disease_name === d)) mapDiseaseFilter = d;
+  }
 
   $: recommendedActions = selectedEntry ? buildRecommendedActions(selectedEntry) : [];
 
@@ -940,13 +950,13 @@
     <div class="content">
       <div class="content-main">
 
-        <div class="tabs">
-          <span class="tab active">Overview</span>
-          <span class="tab inert">Trends</span>
-          <span class="tab inert">Diseases</span>
-          <span class="tab inert">Alerts</span>
-          <span class="tab inert">Reports</span>
-        </div>
+        <TopTabs tabs={[
+          { label: 'Overview', href: '/surveillance' },
+          { label: 'Trends', href: '/surveillance/trends' },
+          { label: 'Diseases', href: '/surveillance/diseases' },
+          { label: 'Alerts', href: '/alerts' },
+          { label: 'Reports', href: '/surveillance/reports' },
+        ]} />
 
         {#if loadError}
           <div class="error-banner">{@html ICONS.bell}{loadError}</div>
@@ -1335,21 +1345,6 @@
     flex-direction: column;
     gap: 16px;
   }
-
-  .tabs {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .tab {
-    padding: 8px 14px;
-    font-size: 0.83rem;
-    color: var(--text-muted);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
-  .tab.inert { opacity: 0.45; }
 
   .error-banner {
     display: flex;

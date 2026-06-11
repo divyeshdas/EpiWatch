@@ -24,8 +24,8 @@
   </div>
 
   <nav class="sidebar-nav">
-    <a href="/surveillance" class="nav-item {path === '/surveillance' ? 'active' : ''}">{@html ICONS.surveillance}<span>Overview</span></a>
-    <a href="/emergency" class="nav-item {path === '/emergency' ? 'active' : ''}">{@html ICONS.truck}<span>Emergency Response</span></a>
+    <a href="/surveillance" class="nav-item {path === '/surveillance' || path.startsWith('/surveillance/') ? 'active' : ''}">{@html ICONS.surveillance}<span>Overview</span></a>
+    <a href="/emergency" class="nav-item {path === '/emergency' || path.startsWith('/emergency/') ? 'active' : ''}">{@html ICONS.truck}<span>Emergency Response</span></a>
     <a href="/alerts" class="nav-item {path === '/alerts' ? 'active' : ''}">
       {@html ICONS.bell}<span>Alerts</span>
       {#if alertCount}<span class="nav-badge">{alertCount}</span>{/if}

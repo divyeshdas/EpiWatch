@@ -27,3 +27,18 @@ export function fmt(n: number): string {
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return n.toLocaleString();
 }
+
+const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+// Monthly outbreak data always lands on the 1st — format as "Mon YYYY" by
+// splitting the ISO date string directly, so no Date/timezone conversion
+// can roll the month back a day.
+export function monthYear(dateStr: string): string {
+  const [year, month] = dateStr.split('-');
+  const m = Number(month);
+  if (!year || !m || m < 1 || m > 12) return dateStr;
+  return `${MONTH_NAMES[m - 1]} ${year}`;
+}

@@ -5,7 +5,7 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import { ICONS } from '$lib/icons';
   import { DISEASE_COLORS } from '$lib/constants';
-  import { diseaseLabel, fmt } from '$lib/format';
+  import { diseaseLabel, fmt, monthYear } from '$lib/format';
 
   const API = 'http://localhost:8000/surveillance';
 
@@ -215,7 +215,7 @@
       <div class="stat-card">
         <div class="stat-label">Peak day</div>
         <div class="stat-value">{peak ? fmt(peak.case_count) : '—'}</div>
-        <div class="stat-sub">{peak ? peak.date : '—'}</div>
+        <div class="stat-sub">{peak ? monthYear(peak.date) : '—'}</div>
       </div>
     </div>
 
@@ -241,7 +241,7 @@
             <tbody>
               {#each series as p}
                 <tr>
-                  <td>{p.date}</td>
+                  <td>{monthYear(p.date)}</td>
                   <td class="num">{p.case_count.toLocaleString()}</td>
                   <td class="num">{p.deaths.toLocaleString()}</td>
                 </tr>
