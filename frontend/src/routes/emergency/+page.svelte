@@ -470,9 +470,12 @@
 
   // CARTO's free basemaps are OpenStreetMap data with light/dark styling, so
   // the map can follow the app's theme toggle while keeping OSM attribution.
+  // "dark_all" reads as near-black against the dashboard's dark surfaces, so
+  // dark mode uses Voyager — its lighter roads/labels stay legible while
+  // still suiting a dark UI.
   const TILE_URLS = {
     light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    dark: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
   };
   const TILE_ATTRIBUTION =
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
@@ -550,6 +553,33 @@
     }).addTo(leafletMap);
   }
 
+  // Catmull-Rom spline through the path nodes, purely for display: the
+  // routing graph is a 4-connected grid (see backend/app/graph/ingest.py),
+  // so the raw path is a sequence of right-angle jogs. Curving it makes the
+  // line read as "a route" — it does NOT change the computed path/score, and
+  // it still doesn't trace real streets (see comment below).
+  function smoothPath(points: number[][], segmentsPerHop = 8): number[][] {
+    if (points.length < 3) return points;
+    const out: number[][] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[Math.max(i - 1, 0)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(i + 2, points.length - 1)];
+      for (let s = 0; s < segmentsPerHop; s++) {
+        const t = s / segmentsPerHop;
+        const t2 = t * t;
+        const t3 = t2 * t;
+        out.push([
+          0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+          0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
+        ]);
+      }
+    }
+    out.push(points[points.length - 1]);
+    return out;
+  }
+
   function renderRoute() {
     if (!leafletMap || !L) return;
     if (routeLine) {
@@ -562,7 +592,8 @@
 
     // The path follows the synthetic road graph used for routing/scoring, not
     // real streets — it's drawn over real geography for orientation only.
-    const latlngs = winner.path.map(p => [p.latitude, p.longitude]);
+    // The raw node-to-node hops are smoothed (smoothPath) for readability.
+    const latlngs = smoothPath(winner.path.map(p => [p.latitude, p.longitude]));
     routeLine = L.polyline(latlngs, {
       color: chartPalette().accent,
       weight: 4,
