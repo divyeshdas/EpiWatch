@@ -1,0 +1,110 @@
+/* Shared "warm charcoal" theme for the EpiWatch frontend.
+   Defines the CSS custom properties used by every page (sidebar/topbar
+   layout dims, color tokens, fonts, easing) plus a couple of global resets.
+   Imported once from src/routes/+layout.svelte. */
+
+html {
+  /* Fonts */
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  /* Surfaces */
+  --bg: #171513;
+  --surface: #1f1c19;
+  --card: #26221f;
+  --card-soft: #2b2723;
+  --bg-panel: var(--surface);
+  --bg-sunken: var(--card);
+  --bg-hover: var(--card-soft);
+  --border: #3a332e;
+  --border-soft: #2f2a26;
+
+  /* Text */
+  --text: #f5f5f4;
+  --text-muted: #a8a29e;
+  --text-faint: #78716c;
+
+  /* Accent */
+  --accent: #14b8a6;
+  --accent-soft: rgba(20, 184, 166, 0.14);
+
+  /* Risk / status scale */
+  --risk-low: #5f806b;
+  --risk-moderate: #a8893f;
+  --risk-high: #b96532;
+  --risk-severe: #c94a45;
+  --danger: #dc4f45;
+  --success: #6fa37f;
+  --green: var(--success);
+  --red: var(--danger);
+
+  /* World map */
+  --map-base: #34302b;
+  --map-border: #51483f;
+  --map-selected: #f5f5f4;
+
+  /* Layout grid */
+  --sidebar-w: 240px;
+  --topbar-h: 68px;
+  --panel-w: 360px;
+  --page-pad: 24px;
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  /* Animation */
+  --ease-hover: 180ms ease;
+  --ease-drawer: 260ms ease;
+}
+
+html[data-theme='light'] {
+  --bg: #f5f2ee;
+  --surface: #ffffff;
+  --card: #faf7f3;
+  --card-soft: #f0ebe5;
+  --border: #e2dcd4;
+  --border-soft: #ede7e0;
+
+  --text: #1f1c19;
+  --text-muted: #6b645d;
+  --text-faint: #9c948b;
+
+  --accent: #0f9d8e;
+  --accent-soft: rgba(15, 157, 142, 0.1);
+
+  --risk-low: #4f7059;
+  --risk-moderate: #8f7530;
+  --risk-high: #a1551f;
+  --risk-severe: #b33a35;
+  --danger: #c9433a;
+  --success: #5c8e6c;
+
+  --map-base: #e6dfd7;
+  --map-border: #cfc6bb;
+  --map-selected: #1f1c19;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes hoverLift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-2px); }
+}
+
+@keyframes drawerSlide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

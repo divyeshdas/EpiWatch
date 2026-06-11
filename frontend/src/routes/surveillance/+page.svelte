@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { browser } from '$app/environment';
+  import { page } from '$app/stores';
   import { theme, toggleTheme } from '$lib/stores/theme';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -86,11 +87,13 @@
 
   const API = 'http://localhost:8000/surveillance';
 
+  // Restrained, fixed per-disease colors — kept consistent everywhere a
+  // disease is shown (trend lines, disease table, hotspot bars).
   const DISEASE_COLORS: Record<string, string> = {
-    covid_19: '#f59e0b',
-    measles: '#ef4444',
-    dengue: '#06b6d4',
-    cholera: '#a78bfa',
+    covid_19: '#14b8a6',
+    measles: '#c94a45',
+    dengue: '#a8893f',
+    cholera: '#78716c',
   };
 
   const DISEASE_LABELS: Record<string, string> = {
@@ -100,23 +103,25 @@
     cholera: 'Cholera',
   };
 
+  // Alert severity reuses the same risk scale as the map — low to severe
+  // is the one meaningful colour code across the whole app.
   const SEVERITY_COLORS: Record<Severity, string> = {
-    LOW: '#22c55e',
-    MEDIUM: '#f59e0b',
-    HIGH: '#f97316',
-    CRITICAL: '#ef4444',
+    LOW: '#5f806b',
+    MEDIUM: '#a8893f',
+    HIGH: '#b96532',
+    CRITICAL: '#c94a45',
   };
   const SEVERITY_MARK_SIZE: Record<Severity, number> = {
     LOW: 7, MEDIUM: 10, HIGH: 13, CRITICAL: 17,
   };
 
-  // Risk levels reuse the same colour scale as alert severity — green to
-  // red is the one meaningful colour code across the whole app.
+  // Risk levels reuse the same colour scale as alert severity — low to
+  // severe is the one meaningful colour code across the whole app.
   const RISK_COLORS: Record<RiskLevel, string> = {
-    LOW: '#22c55e',
-    MODERATE: '#f59e0b',
-    HIGH: '#f97316',
-    SEVERE: '#ef4444',
+    LOW: '#5f806b',
+    MODERATE: '#a8893f',
+    HIGH: '#b96532',
+    SEVERE: '#c94a45',
   };
   const RISK_LABELS: Record<RiskLevel, string> = {
     LOW: 'Low', MODERATE: 'Moderate', HIGH: 'High', SEVERE: 'Severe',
@@ -149,6 +154,7 @@
   const ICONS: Record<string, string> = {
     brand: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><polyline points="7,12 9.5,12 11,8 13,16 14.5,12 17,12"/></svg>`,
     surveillance: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>`,
+    truck: `<svg ${ICON_ATTRS}><path d="M10 17h4V5H2v12h2"/><path d="M14 9h4l3 3v5h-3"/><circle cx="6.5" cy="17.5" r="1.5"/><circle cx="17.5" cy="17.5" r="1.5"/></svg>`,
     globe: `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`,
     trend: `<svg ${ICON_ATTRS}><polyline points="3,17 9,11 13,15 21,7"/><polyline points="15,7 21,7 21,13"/></svg>`,
     activity: `<svg ${ICON_ATTRS}><polyline points="2,12 6,12 9,5 14,19 17,12 22,12"/></svg>`,
@@ -167,6 +173,8 @@
     sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>`,
     moon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`,
     arrowRight: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg>`,
+    panel: `<svg ${ICON_ATTRS}><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`,
+    x: `<svg ${ICON_ATTRS}><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>`,
   };
 
   // ── Risk scoring ───────────────────────────────────────────────────────────
@@ -206,7 +214,11 @@
   let selectedCountry = 'India';
   let selectedCountryDisease = 'covid_19';
   let loadingData = true;
+  let loadError: string | null = null;
   let lastUpdated: Date | null = null;
+
+  // Right intelligence panel — collapses to an off-canvas drawer below 1100px.
+  let panelOpen = false;
 
   // Map filters — both are real filters over countryEntries, not decoration.
   let mapDiseaseFilter = 'all';
@@ -240,6 +252,7 @@
 
   async function loadAll() {
     loadingData = true;
+    loadError = null;
     try {
       const r = await fetch(`${API}/diseases`);
       diseases = await r.json();
@@ -297,6 +310,8 @@
         selectedCountry = countryEntries[0]?.country ?? '';
       }
       lastUpdated = new Date();
+    } catch (e) {
+      loadError = 'Could not reach the surveillance API. Showing the last known data.';
     } finally {
       loadingData = false;
     }
@@ -487,6 +502,7 @@
   function selectCountry(country: string) {
     if (!countryEntries.find(c => c.country === country)) return;
     selectedCountry = country;
+    panelOpen = true;
   }
 
   function handleSearch(e: KeyboardEvent) {
@@ -503,16 +519,17 @@
   function chartPalette() {
     const dark = $theme !== 'light';
     return {
-      text:          dark ? '#e6e8ee' : '#171a21',
-      muted:         dark ? '#8b94a7' : '#5b6472',
-      grid:          dark ? '#222838' : '#e7e9ee',
-      axis:          dark ? '#2a3142' : '#dde1e8',
-      tooltipBg:     dark ? '#161b28' : '#ffffff',
-      tooltipBorder: dark ? '#2a3142' : '#dde1e8',
-      bg:            dark ? '#0c0f17' : '#f5f6f8',
-      noData:        dark ? '#1a1f2c' : '#e7e9ee',
-      hover:         dark ? '#2a3142' : '#dde1e8',
-      border:        dark ? '#222838' : '#e7e9ee',
+      text:          dark ? '#f5f5f4' : '#1f1c19',
+      muted:         dark ? '#a8a29e' : '#6b645d',
+      grid:          dark ? '#3a332e' : '#e2dcd4',
+      axis:          dark ? '#51483f' : '#cfc6bb',
+      tooltipBg:     dark ? '#26221f' : '#faf7f3',
+      tooltipBorder: dark ? '#3a332e' : '#e2dcd4',
+      bg:            dark ? '#34302b' : '#e6dfd7',
+      noData:        dark ? '#34302b' : '#e6dfd7',
+      hover:         dark ? '#2b2723' : '#f0ebe5',
+      border:        dark ? '#51483f' : '#cfc6bb',
+      selected:      dark ? '#f5f5f4' : '#1f1c19',
     };
   }
 
@@ -645,7 +662,7 @@
       itemStyle: {
         areaColor: c.hasData ? RISK_COLORS[c.riskLevel] : pal.noData,
         opacity: c.hasData ? 0.78 : 1,
-        borderColor: c.country === selectedCountry ? pal.text : pal.border,
+        borderColor: c.country === selectedCountry ? pal.selected : pal.border,
         borderWidth: c.country === selectedCountry ? 1.5 : 0.5,
       },
     }));
@@ -666,6 +683,8 @@
           ];
           if (meta.pctChange !== null) lines.push(`<br/>Change: ${fmtPct(meta.pctChange)}`);
           if (meta.anomalyZ !== null) lines.push(`<br/>Anomaly: ${formatZ(meta.anomalyZ)}`);
+          const diseases = meta.diseases.map(d => diseaseLabel(d.disease)).join(', ');
+          if (diseases) lines.push(`<br/>Active diseases: ${diseases}`);
           return lines.join('');
         },
       },
@@ -710,7 +729,7 @@
 
     trendChart.setOption({
       backgroundColor: 'transparent',
-      animationDurationUpdate: 450,
+      animationDurationUpdate: 500,
       grid: { top: 40, right: 16, bottom: 32, left: 56, containLabel: false },
       tooltip: {
         trigger: 'axis',
@@ -765,7 +784,7 @@
 
     countryChart.setOption({
       backgroundColor: 'transparent',
-      animationDurationUpdate: 450,
+      animationDurationUpdate: 500,
       grid: { top: 16, right: 12, bottom: 28, left: 48, containLabel: false },
       tooltip: {
         trigger: 'axis',
@@ -860,7 +879,7 @@
 
       mapChart.on('click', (params: any) => {
         const meta = params.data?.countryMeta;
-        if (meta?.hasData) selectedCountry = meta.country;
+        if (meta?.hasData) selectCountry(meta.country);
       });
 
       await Promise.all([loadAll(), loadAlerts(), loadWorldMap()]);
@@ -895,7 +914,8 @@
     </div>
 
     <nav class="sidebar-nav">
-      <a href="/surveillance" class="nav-item active">{@html ICONS.surveillance}<span>Surveillance</span></a>
+      <a href="/surveillance" class="nav-item {$page.url.pathname === '/surveillance' ? 'active' : ''}">{@html ICONS.surveillance}<span>Overview</span></a>
+      <a href="/emergency" class="nav-item {$page.url.pathname === '/emergency' ? 'active' : ''}">{@html ICONS.truck}<span>Emergency Response</span></a>
       <span class="nav-item inert">{@html ICONS.globe}<span>Global Map</span></span>
       <span class="nav-item inert">{@html ICONS.trend}<span>Trends</span></span>
       <span class="nav-item inert">{@html ICONS.activity}<span>Diseases</span></span>
@@ -941,6 +961,11 @@
         <button class="topbar-btn">{@html ICONS.share}<span>Share</span></button>
         <button class="topbar-btn">{@html ICONS.download}<span>Download</span></button>
         <button class="topbar-btn">{@html ICONS.filter}<span>Filters</span></button>
+        <button
+          class="icon-btn panel-toggle-btn"
+          aria-label="Open country intelligence panel"
+          on:click={() => panelOpen = true}
+        >{@html ICONS.panel}</button>
       </div>
     </header>
 
@@ -954,6 +979,10 @@
           <span class="tab inert">Alerts</span>
           <span class="tab inert">Reports</span>
         </div>
+
+        {#if loadError}
+          <div class="error-banner">{@html ICONS.bell}{loadError}</div>
+        {/if}
 
         <!-- Global Risk Map -->
         <section class="panel">
@@ -1080,7 +1109,16 @@
       </div>
 
       <!-- ── Country detail panel ────────────────────────────────────────── -->
-      <aside class="detail-panel">
+      <div
+        class="drawer-backdrop {panelOpen ? 'show' : ''}"
+        role="presentation"
+        aria-hidden="true"
+        on:click={() => panelOpen = false}
+      ></div>
+      <aside class="detail-panel {panelOpen ? 'drawer-open' : ''}">
+        <button class="icon-btn drawer-close" aria-label="Close panel" on:click={() => panelOpen = false}>
+          {@html ICONS.x}
+        </button>
         {#if selectedEntry}
           {@const entry = selectedEntry}
           <div class="detail-header">
@@ -1192,49 +1230,8 @@
 </div>
 
 <style>
-  :global(html) {
-    --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
-    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
-
-    --bg: #0a0d14;
-    --bg-panel: #11151f;
-    --bg-sunken: #0c0f17;
-    --bg-hover: #1a1f2c;
-    --border: #222838;
-    --border-soft: #1a1f2c;
-    --text: #e6e8ee;
-    --text-muted: #8b94a7;
-    --text-faint: #5b6472;
-    --accent: #3b82f6;
-    --accent-soft: rgba(59, 130, 246, 0.14);
-    --green: #22c55e;
-    --red: #ef4444;
-  }
-
-  :global(html[data-theme='light']) {
-    --bg: #f5f6f8;
-    --bg-panel: #ffffff;
-    --bg-sunken: #f7f8fa;
-    --bg-hover: #eef0f4;
-    --border: #e7e9ee;
-    --border-soft: #eef0f4;
-    --text: #171a21;
-    --text-muted: #5b6472;
-    --text-faint: #9aa3b2;
-    --accent: #2563eb;
-    --accent-soft: rgba(37, 99, 235, 0.08);
-  }
-
-  :global(html),
-  :global(body) {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-  }
-
-  :global(*) {
-    box-sizing: border-box;
-  }
+  /* Theme variables, fonts, and global resets live in
+     src/lib/styles/theme.css (imported once via the root layout). */
 
   /* ── Shell layout ─────────────────────────────────────────────────────── */
 
@@ -1250,7 +1247,7 @@
   /* ── Sidebar ──────────────────────────────────────────────────────────── */
 
   .sidebar {
-    width: 232px;
+    width: var(--sidebar-w);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -1346,8 +1343,8 @@
     font-family: var(--mono);
     font-size: 0.65rem;
     font-weight: 600;
-    color: var(--red);
-    background: rgba(239, 68, 68, 0.14);
+    color: var(--danger);
+    background: rgba(220, 79, 69, 0.14);
     border-radius: 8px;
     padding: 1px 6px;
   }
@@ -1360,7 +1357,8 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 12px 24px;
+    height: var(--topbar-h);
+    padding: 0 24px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-panel);
     position: sticky;
@@ -1434,12 +1432,12 @@
     flex-shrink: 0;
   }
   .ws-dot.connected {
-    background: var(--green);
+    background: var(--success);
     animation: breathe 2.4s ease-in-out infinite;
   }
   @keyframes breathe {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-    50% { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(111, 163, 127, 0.5); }
+    50% { box-shadow: 0 0 0 4px rgba(111, 163, 127, 0); }
   }
   .topbar-btn {
     display: flex;
@@ -1463,8 +1461,8 @@
   .content {
     display: flex;
     align-items: flex-start;
-    gap: 20px;
-    padding: 20px 24px;
+    gap: var(--page-pad);
+    padding: var(--page-pad);
     flex: 1;
   }
   .content-main {
@@ -1490,12 +1488,25 @@
   .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
   .tab.inert { opacity: 0.45; }
 
+  .error-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--danger);
+    background: rgba(220, 79, 69, 0.1);
+    color: var(--danger);
+    font-size: 0.83rem;
+  }
+  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+
   /* ── Panels ───────────────────────────────────────────────────────────── */
 
   .panel {
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 18px;
   }
   .panel-header {
@@ -1506,7 +1517,7 @@
     margin-bottom: 14px;
   }
   .panel-header h2 {
-    font-size: 0.95rem;
+    font-size: 1.125rem;
     font-weight: 600;
     margin: 0;
     letter-spacing: -0.01em;
@@ -1536,16 +1547,16 @@
     font-weight: 600;
     color: var(--text-faint);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    font-size: 0.6875rem;
   }
   .legend-item { display: flex; align-items: center; gap: 6px; }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
   .map-wrap {
     position: relative;
-    height: 380px;
-    border-radius: 6px;
+    height: 440px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
@@ -1583,12 +1594,12 @@
     align-items: flex-start;
     gap: 10px;
     padding: 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
-    transition: border-color 0.15s ease;
+    transition: border-color var(--ease-hover), transform var(--ease-hover);
   }
-  .stat-card:hover { border-color: var(--border); }
+  .stat-card:hover { border-color: var(--border); transform: translateY(-2px); }
   .stat-card :global(svg) {
     width: 17px;
     height: 17px;
@@ -1597,10 +1608,10 @@
     margin-top: 2px;
   }
   .stat-label {
-    font-size: 0.66rem;
+    font-size: 0.6875rem;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
   }
   .stat-value {
     font-family: var(--mono);
@@ -1610,8 +1621,8 @@
     color: var(--text);
   }
   .stat-sub { font-size: 0.7rem; color: var(--text-faint); margin-top: 2px; }
-  .stat-up { color: var(--green); }
-  .stat-down { color: var(--red); }
+  .stat-up { color: var(--success); }
+  .stat-down { color: var(--danger); }
 
   /* ── Trends + hotspots row ────────────────────────────────────────────── */
 
@@ -1697,34 +1708,39 @@
 
   /* ── Country detail panel ─────────────────────────────────────────────── */
 
+  /* Drawer controls — hidden on desktop, shown below 1100px (see media query). */
+  .panel-toggle-btn { display: none; }
+  .drawer-close { display: none; }
+  .drawer-backdrop { display: none; }
+
   .detail-panel {
-    width: 340px;
+    width: var(--panel-w);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 18px;
     position: sticky;
-    top: 76px;
-    max-height: calc(100vh - 96px);
+    top: calc(var(--topbar-h) + 8px);
+    max-height: calc(100vh - var(--topbar-h) - 16px);
     overflow-y: auto;
   }
   .detail-panel::-webkit-scrollbar { width: 6px; }
   .detail-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-  .detail-header h2 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+  .detail-header h2 { font-size: 1.25rem; font-weight: 600; margin: 0; }
 
   .risk-score-block {
     text-align: center;
     padding: 16px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
   }
-  .risk-label { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .risk-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .risk-score { font-family: var(--mono); margin-top: 6px; }
   .risk-number { font-size: 2.4rem; font-weight: 700; color: var(--text); }
   .risk-max { font-size: 1rem; color: var(--text-faint); }
@@ -1738,19 +1754,19 @@
   .detail-cell {
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 10px;
   }
-  .detail-label { font-size: 0.64rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .detail-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .detail-value { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
 
   .detail-section { padding-top: 14px; border-top: 1px solid var(--border-soft); }
   .detail-section-title {
-    font-size: 0.72rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     margin-bottom: 8px;
   }
   .detail-section-sub {
@@ -1777,10 +1793,10 @@
     gap: 8px;
   }
   .disease-table-head {
-    font-size: 0.6rem;
+    font-size: 0.6875rem;
     color: var(--text-faint);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
     padding: 0 8px 4px;
   }
   .disease-table-head span:not(:first-child) { text-align: right; }
@@ -1831,7 +1847,7 @@
     padding: 8px 10px;
   }
   .alert-top { display: flex; justify-content: space-between; align-items: center; }
-  .alert-sev { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; }
+  .alert-sev { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
   .alert-time { font-size: 0.66rem; color: var(--text-faint); font-family: var(--mono); }
   .alert-msg { font-size: 0.78rem; color: var(--text); margin-top: 4px; line-height: 1.4; }
 
@@ -1882,7 +1898,41 @@
   }
   @media (max-width: 1100px) {
     .content { flex-direction: column; }
-    .detail-panel { width: 100%; position: static; max-height: none; }
+
+    .panel-toggle-btn { display: flex; }
+    .drawer-close {
+      display: flex;
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 1;
+    }
+    .drawer-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity var(--ease-drawer);
+      z-index: 55;
+    }
+    .drawer-backdrop.show { opacity: 1; pointer-events: auto; }
+
+    .detail-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(var(--panel-w), 100%);
+      height: 100vh;
+      max-height: 100vh;
+      transform: translateX(100%);
+      transition: transform var(--ease-drawer);
+      z-index: 60;
+      box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3);
+      border-radius: 0;
+    }
+    .detail-panel.drawer-open { transform: translateX(0); }
   }
   @media (max-width: 720px) {
     .sidebar { display: none; }
