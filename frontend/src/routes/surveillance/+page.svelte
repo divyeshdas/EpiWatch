@@ -913,7 +913,7 @@
           symbol: 'none',
           lineStyle: { color, width: 2 },
           areaStyle: {
-            color: echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: color + 'aa' },
               { offset: 1, color: color + '05' },
             ]),
