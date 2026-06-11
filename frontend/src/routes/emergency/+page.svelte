@@ -198,8 +198,6 @@
   let L: any = null;
   let mapEl: HTMLDivElement;
   let leafletMap: any = null;
-  let tileLayer: any = null;
-  let tileTheme: 'light' | 'dark' | null = null;
   let hospitalLayer: any = null;
   let emergencyMarker: any = null;
   let routeLine: any = null;
@@ -468,31 +466,23 @@
     };
   }
 
-  // CARTO's free basemaps are OpenStreetMap data with light/dark styling, so
-  // the map can follow the app's theme toggle while keeping OSM attribution.
-  // "dark_all" reads as near-black against the dashboard's dark surfaces, so
-  // dark mode uses Voyager — its lighter roads/labels stay legible while
-  // still suiting a dark UI.
-  const TILE_URLS = {
-    light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    dark: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-  };
+  // CARTO Voyager: a free OSM-based basemap with light, legible roads/labels.
+  // Used for both themes — the dashboard's own light/dark surfaces provide
+  // the theme contrast; CARTO's near-black "dark_all" tiles read as
+  // illegible against a dark UI, and plain "light_all" is too faint to show
+  // road detail in light mode either.
+  const TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
   const TILE_ATTRIBUTION =
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
     '&copy; <a href="https://carto.com/attributions">CARTO</a>';
 
-  function updateTileLayer() {
+  function initTileLayer() {
     if (!leafletMap || !L) return;
-    const wanted = $theme === 'light' ? 'light' : 'dark';
-    if (tileTheme === wanted) return;
-    if (tileLayer) leafletMap.removeLayer(tileLayer);
-    tileLayer = L.tileLayer(TILE_URLS[wanted], {
+    L.tileLayer(TILE_URL, {
       maxZoom: 19,
       subdomains: 'abcd',
       attribution: TILE_ATTRIBUTION,
     }).addTo(leafletMap);
-    tileLayer.bringToBack();
-    tileTheme = wanted;
   }
 
   // Marker radius scales with bed count, same shape as the old ECharts symbol size.
@@ -611,7 +601,6 @@
 
   function renderMap() {
     if (!leafletMap || !L) return;
-    updateTileLayer();
     renderHospitalMarkers();
     renderEmergencyMarker();
     renderRoute();
@@ -640,7 +629,7 @@
       // the hospital bounds) once the data loads.
       leafletMap = L.map(mapEl, { zoomControl: true }).setView([19.076, 72.8777], 11);
       hospitalLayer = L.layerGroup().addTo(leafletMap);
-      updateTileLayer();
+      initTileLayer();
 
       // Click anywhere on the map to report an emergency there — e.latlng
       // gives real coordinates directly, no pixel/axis conversion needed.
