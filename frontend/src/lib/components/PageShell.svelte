@@ -1,6 +1,7 @@
 <script lang="ts">
   import Sidebar from './Sidebar.svelte';
   import { ICONS } from '$lib/icons';
+  import { toggleSidebar } from '$lib/stores/sidebar';
 
   export let section: string;
   export let title: string;
@@ -12,7 +13,7 @@
 
   <div class="main">
     <header class="topbar">
-      <button class="icon-btn menu-btn" aria-label="Menu">{@html ICONS.menu}</button>
+      <button class="icon-btn menu-btn" aria-label="Toggle sidebar" on:click={toggleSidebar}>{@html ICONS.menu}</button>
       <h1 class="page-title">{title}</h1>
       <div class="topbar-right">
         <slot name="topbar-right" />

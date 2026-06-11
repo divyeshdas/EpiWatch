@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { theme, toggleTheme } from '$lib/stores/theme';
+  import { sidebarCollapsed } from '$lib/stores/sidebar';
   import { ICONS } from '$lib/icons';
 
   // Brand subtitle under "EpiWatch" — varies per section (Surveillance,
@@ -14,10 +15,10 @@
   $: path = $page.url.pathname;
 </script>
 
-<aside class="sidebar">
+<aside class="sidebar {$sidebarCollapsed ? 'collapsed' : ''}">
   <div class="sidebar-brand">
     <span class="brand-mark">{@html ICONS.brand}</span>
-    <div>
+    <div class="brand-text">
       <div class="brand-name">EpiWatch</div>
       <div class="brand-section">{section}</div>
     </div>
@@ -76,10 +77,22 @@
     position: sticky;
     top: 0;
     height: 100vh;
+    overflow-x: hidden;
     overflow-y: auto;
+    transition: width var(--ease-drawer, 220ms ease);
   }
   .sidebar::-webkit-scrollbar { width: 6px; }
   .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .sidebar.collapsed { width: 64px; padding-left: 10px; padding-right: 10px; }
+  .sidebar.collapsed .brand-text,
+  .sidebar.collapsed .nav-item span,
+  .sidebar.collapsed .nav-badge,
+  .sidebar.collapsed .soon-badge {
+    display: none;
+  }
+  .sidebar.collapsed .sidebar-brand { justify-content: center; padding-left: 0; padding-right: 0; }
+  .sidebar.collapsed .nav-item { justify-content: center; gap: 0; }
 
   .sidebar-brand {
     display: flex;
