@@ -74,12 +74,7 @@
 <div class="ticker">
   <div class="ticker-live">
     <span class="live-mark" aria-hidden="true">
-      <svg width="18" height="14" viewBox="0 0 18 14" fill="none" style="overflow:visible;" aria-hidden="true">
-        <path d="M1 7 H4 L6 2 L9 12 L11 7 H17" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" stroke-linejoin="round">
-          <animate attributeName="stroke-dasharray" values="0 40;40 0" dur="1.6s" repeatCount="indefinite"/>
-        </path>
-      </svg>
+      <span class="live-dot"></span>
     </span>
     <span>Live</span>
   </div>
@@ -132,6 +127,17 @@
     white-space: nowrap;
   }
   .live-mark { display: flex; align-items: center; }
+  .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    animation: live-pulse 2s ease-in-out infinite;
+  }
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.82); }
+  }
 
   .ticker-track {
     flex: 1;

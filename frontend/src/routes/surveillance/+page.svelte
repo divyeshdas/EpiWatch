@@ -1308,16 +1308,18 @@
         </button>
         {#if selectedEntry}
           {@const entry = selectedEntry}
+          {@const focusDisease = selectedDiseaseSeries ?? entry.primary}
+          {@const focusLevel = riskLevelFor(focusDisease.riskScore)}
           <div class="detail-header">
             <h2>{entry.country}</h2>
           </div>
 
           <div class="risk-score-block">
-            <div class="risk-label">Risk Score</div>
+            <div class="risk-label">Risk Score — {diseaseLabel(focusDisease.disease)}</div>
             <div class="risk-score">
-              <span class="risk-number">{entry.riskScore}</span><span class="risk-max">/100</span>
+              <span class="risk-number">{focusDisease.riskScore}</span><span class="risk-max">/100</span>
             </div>
-            <div class="risk-level" style="color: {RISK_COLORS[entry.riskLevel]}">{RISK_LABELS[entry.riskLevel]} Risk</div>
+            <div class="risk-level" style="color: {RISK_COLORS[focusLevel]}">{RISK_LABELS[focusLevel]} Risk</div>
           </div>
 
           <div class="detail-grid">

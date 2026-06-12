@@ -29,6 +29,11 @@ html {
   --accent: #14b8a6;
   --accent-soft: rgba(20, 184, 166, 0.14);
 
+  /* Nav active-state tint — muted amber, kept separate from the accent and
+     risk scale so it carries no data meaning, just "current page". */
+  --nav-active: #d8b878;
+  --nav-active-soft: rgba(191, 150, 69, 0.16);
+
   /* Risk / status scale */
   --risk-low: #5f806b;
   --risk-moderate: #a8893f;
@@ -80,6 +85,9 @@ html[data-theme='light'] {
 
   --accent: #0f9d8e;
   --accent-soft: rgba(15, 157, 142, 0.1);
+
+  --nav-active: #8a6d23;
+  --nav-active-soft: rgba(140, 107, 35, 0.12);
 
   --risk-low: #4f7059;
   --risk-moderate: #8f7530;

@@ -125,8 +125,8 @@
   .nav-item :global(svg) { width: 20px; height: 20px; flex-shrink: 0; }
   .nav-item:hover { background: var(--bg-hover); color: var(--text); }
   .nav-item.active {
-    color: var(--text);
-    background: var(--accent-soft);
+    color: var(--nav-active);
+    background: var(--nav-active-soft);
     font-weight: 500;
   }
 

@@ -256,7 +256,7 @@
 </PageShell>
 
 <style>
-  .explorer-page { max-width: 920px; margin: 0 auto; width: 100%; }
+  .explorer-page { max-width: 1400px; margin: 0 auto; width: 100%; }
 
   .page-header { margin-bottom: var(--space-4); }
   .section-title {

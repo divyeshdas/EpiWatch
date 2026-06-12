@@ -186,7 +186,7 @@
 
 <style>
   .alerts-page {
-    max-width: 760px;
+    max-width: 1400px;
     margin: 0 auto;
     width: 100%;
   }
