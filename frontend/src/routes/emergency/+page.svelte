@@ -3,12 +3,11 @@
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { theme } from '$lib/stores/theme';
-  import Sidebar from '$lib/components/Sidebar.svelte';
   import Ticker from '$lib/components/Ticker.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import TopTabs from '$lib/components/TopTabs.svelte';
   import { downloadCsv } from '$lib/csv';
   import { ICONS } from '$lib/icons';
-  import { sidebarCollapsed, toggleSidebar } from '$lib/stores/sidebar';
   import { API_BASE, WS_BASE } from '$lib/api';
   import 'leaflet/dist/leaflet.css';
 
@@ -794,17 +793,6 @@
     renderMap();
   }
 
-  // Resize the map after the sidebar collapses/expands — skip the initial
-  // run (the store's starting value), only react to actual toggles.
-  let sidebarReady = false;
-  $: if (browser) {
-    $sidebarCollapsed;
-    if (sidebarReady) {
-      setTimeout(() => leafletMap?.invalidateSize(), 240);
-    } else {
-      sidebarReady = true;
-    }
-  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -860,85 +848,80 @@
 
 <div class="shell">
 
-  <!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
-  <Sidebar section="Routing" />
+  <Ticker />
 
-  <!-- ── Main column ───────────────────────────────────────────────────────── -->
-  <div class="main">
-
-    <header class="topbar">
-      <button class="icon-btn menu-btn" aria-label="Toggle sidebar" on:click={toggleSidebar}>{@html ICONS.menu}</button>
-      <div class="search-box">
-        {@html ICONS.search}
-        <input
-          type="text"
-          placeholder="Search hospital or region…"
-          bind:value={searchQuery}
-          on:keydown={handleSearch}
-          on:focus={() => searchFocused = true}
-          on:blur={() => setTimeout(() => searchFocused = false, 150)}
-        />
-        <span class="kbd">↵</span>
-        {#if searchOpen}
-          <div class="search-dropdown">
-            {#if searchMatches.length === 0}
-              <div class="search-empty">No hospitals or regions match "{searchQuery}"</div>
-            {:else}
-              {#each searchMatches as m, i (m.id)}
-                <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
-                  <span class="search-match-label">{m.label}</span>
-                  <span class="search-match-sub">{m.sub}</span>
-                </button>
+  <TopNav>
+    <div class="search-box">
+      {@html ICONS.search}
+      <input
+        type="text"
+        placeholder="Search hospital or region…"
+        bind:value={searchQuery}
+        on:keydown={handleSearch}
+        on:focus={() => searchFocused = true}
+        on:blur={() => setTimeout(() => searchFocused = false, 150)}
+      />
+      <span class="kbd">↵</span>
+      {#if searchOpen}
+        <div class="search-dropdown">
+          {#if searchMatches.length === 0}
+            <div class="search-empty">No hospitals or regions match "{searchQuery}"</div>
+          {:else}
+            {#each searchMatches as m, i (m.id)}
+              <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
+                <span class="search-match-label">{m.label}</span>
+                <span class="search-match-sub">{m.sub}</span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
+    <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+    <div class="topbar-action">
+      <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
+      {#if filtersOpen}
+        <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
+        <div class="filters-popover">
+          <label class="filter-field">
+            <span>Hospital load</span>
+            <select class="quiet-select" bind:value={loadFilter}>
+              <option value="all">All</option>
+              <option value="available">Available (&lt;60%)</option>
+              <option value="busy">Busy (60–85%)</option>
+              <option value="critical">Critical (&gt;85%)</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Specialization</span>
+            <select class="quiet-select" bind:value={specializationFilter}>
+              <option value="all">All</option>
+              {#each specializations as s}
+                <option value={s}>{s}</option>
               {/each}
-            {/if}
-          </div>
-        {/if}
-      </div>
-      <div class="topbar-right">
+            </select>
+          </label>
+        </div>
+      {/if}
+    </div>
+    <button
+      class="icon-btn panel-toggle-btn"
+      aria-label="Open dispatch panel"
+      on:click={() => panelOpen = true}
+    >{@html ICONS.panel}</button>
+  </TopNav>
+
+  <div class="content">
+    <div class="content-main">
+
+      <div class="page-header">
+        <h1 class="section-title">Emergency Response</h1>
         <div class="data-updated">
           <span class="ws-dot {wsConnected ? 'connected' : ''}"></span>
           Data updated {lastUpdated ? timeAgo(lastUpdated.toISOString()) : '—'}
         </div>
-        <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
-        <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
-        <div class="topbar-action">
-          <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
-          {#if filtersOpen}
-            <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
-            <div class="filters-popover">
-              <label class="filter-field">
-                <span>Hospital load</span>
-                <select class="quiet-select" bind:value={loadFilter}>
-                  <option value="all">All</option>
-                  <option value="available">Available (&lt;60%)</option>
-                  <option value="busy">Busy (60–85%)</option>
-                  <option value="critical">Critical (&gt;85%)</option>
-                </select>
-              </label>
-              <label class="filter-field">
-                <span>Specialization</span>
-                <select class="quiet-select" bind:value={specializationFilter}>
-                  <option value="all">All</option>
-                  {#each specializations as s}
-                    <option value={s}>{s}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-          {/if}
-        </div>
-        <button
-          class="icon-btn panel-toggle-btn"
-          aria-label="Open dispatch panel"
-          on:click={() => panelOpen = true}
-        >{@html ICONS.panel}</button>
       </div>
-    </header>
-
-    <Ticker />
-
-    <div class="content">
-      <div class="content-main">
 
         <TopTabs tabs={[
           { label: 'Dispatch', href: '/emergency' },
@@ -1155,7 +1138,7 @@
           <div class="detail-header"><h2>Emergency #{activeCase.id}</h2></div>
           <div class="risk-score-block">
             <div class="risk-label">Patient Condition</div>
-            <div class="risk-level" style="color: {conditionColor(activeCase.patient_condition)}; font-size: 1.3rem; margin-top: 6px;">
+            <div class="risk-level" style="color: {conditionColor(activeCase.patient_condition)}; font-size: 1.3rem; margin-top: var(--space-2);">
               {conditionLabel(activeCase.patient_condition)}
             </div>
           </div>
@@ -1262,7 +1245,6 @@
         {/if}
       </aside>
     </div>
-  </div>
 </div>
 
 <style>
@@ -1273,6 +1255,7 @@
 
   .shell {
     display: flex;
+    flex-direction: column;
     min-height: 100vh;
     font-family: var(--sans);
     font-size: 14px;
@@ -1280,21 +1263,18 @@
     color: var(--text);
   }
 
-  /* ── Main column ──────────────────────────────────────────────────────── */
-
-  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-  .topbar {
+  .page-header {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    height: var(--topbar-h);
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-panel);
-    position: sticky;
-    top: 0;
-    z-index: 10;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .section-title {
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin: 0;
   }
 
   .icon-btn {
@@ -1320,13 +1300,13 @@
     gap: 8px;
     flex: 1;
     max-width: 440px;
-    padding: 7px 12px;
+    padding: var(--space-2) var(--space-3);
     border-radius: 6px;
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     color: var(--text-muted);
   }
-  .search-box :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .search-box :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
   .search-box input {
     flex: 1;
     border: none;
@@ -1384,16 +1364,15 @@
     letter-spacing: 0.06em;
   }
   .search-empty {
-    padding: 10px 12px;
+    padding: var(--space-3) var(--space-3);
     font-size: 0.83rem;
     color: var(--text-faint);
   }
 
-  .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
   .data-updated {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--space-2);
     font-size: 0.75rem;
     color: var(--text-muted);
     white-space: nowrap;
@@ -1416,8 +1395,8 @@
   .topbar-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 7px 12px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border-radius: 6px;
     border: 1px solid var(--border);
     background: transparent;
@@ -1428,7 +1407,7 @@
     white-space: nowrap;
   }
   .topbar-btn:hover { background: var(--bg-hover); color: var(--text); }
-  .topbar-btn :global(svg) { width: 14px; height: 14px; }
+  .topbar-btn :global(svg) { width: 16px; height: 16px; }
   .topbar-btn.active { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
 
   .topbar-action { position: relative; }
@@ -1449,7 +1428,7 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
     min-width: 200px;
   }
   .filter-field {
@@ -1465,7 +1444,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 8px;
+    padding: var(--space-1) var(--space-2);
     font-family: var(--sans);
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -1493,14 +1472,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   /* ── Panels ───────────────────────────────────────────────────────────── */
 
@@ -1508,14 +1487,14 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
   }
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 14px;
+    margin-bottom: var(--space-4);
   }
   .panel-header h2 {
     font-size: 1.125rem;
@@ -1540,7 +1519,7 @@
     letter-spacing: 0.08em;
     font-size: 0.6875rem;
   }
-  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: var(--space-2); }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
   .map-wrap {
@@ -1639,7 +1618,7 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 14px;
+    padding: var(--space-2) var(--space-4);
     font-size: 0.78rem;
     color: var(--text-muted);
     pointer-events: none;
@@ -1655,7 +1634,7 @@
   .stat-card {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: var(--space-3);
     padding: 12px;
     border-radius: var(--radius-sm);
     background: var(--bg-sunken);
@@ -1664,8 +1643,8 @@
   }
   .stat-card:hover { border-color: var(--border); transform: translateY(-2px); }
   .stat-card :global(svg) {
-    width: 17px;
-    height: 17px;
+    width: 16px;
+    height: 16px;
     color: var(--accent);
     flex-shrink: 0;
     margin-top: 2px;
@@ -1709,7 +1688,7 @@
     display: grid;
     grid-template-columns: 1.8fr 0.9fr 1fr 1fr 0.6fr;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-3);
   }
   .hospital-table-head {
     font-size: 0.6rem;
@@ -1736,7 +1715,7 @@
 
   /* ── Recent emergencies ───────────────────────────────────────────────── */
 
-  .emergency-list { display: flex; flex-direction: column; gap: 6px; }
+  .emergency-list { display: flex; flex-direction: column; gap: var(--space-2); }
   .emergency-row {
     display: flex;
     flex-direction: column;
@@ -1784,7 +1763,7 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
     position: sticky;
     top: calc(var(--topbar-h) + 8px);
     max-height: calc(100vh - var(--topbar-h) - 16px);
@@ -1804,7 +1783,7 @@
   }
   .risk-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .risk-level { font-size: 0.83rem; font-weight: 600; margin-top: 4px; }
-  .winner-name { font-family: var(--sans); font-size: 1.25rem; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .winner-name { font-family: var(--sans); font-size: 1.25rem; font-weight: 700; color: var(--text); margin-top: var(--space-2); }
 
   .detail-grid {
     display: grid;
@@ -1815,12 +1794,12 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
-    padding: 10px;
+    padding: var(--space-3);
   }
   .detail-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .detail-value { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
 
-  .detail-section { padding-top: 14px; border-top: 1px solid var(--border-soft); }
+  .detail-section { padding-top: var(--space-4); border-top: 1px solid var(--border-soft); }
   .detail-section-title {
     font-size: 0.6875rem;
     font-weight: 600;
@@ -1835,7 +1814,7 @@
   .condition-picker {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    gap: var(--space-2);
   }
   .condition-btn {
     padding: 8px;
@@ -1863,7 +1842,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 10px;
+    padding: var(--space-3);
     border-radius: 6px;
     border: 1px solid var(--accent);
     background: var(--accent-soft);
@@ -1875,22 +1854,22 @@
   }
   .primary-btn:hover { background: var(--accent); color: #fff; }
   .primary-btn:disabled { opacity: 0.6; cursor: default; background: var(--accent-soft); color: var(--accent); }
-  .primary-btn :global(svg) { width: 15px; height: 15px; }
+  .primary-btn :global(svg) { width: 16px; height: 16px; }
 
   .text-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: var(--space-2);
     border: none;
     background: transparent;
     color: var(--accent);
     font-family: var(--sans);
     font-size: 0.78rem;
     cursor: pointer;
-    padding: 6px;
+    padding: var(--space-2);
   }
-  .text-btn :global(svg) { width: 13px; height: 13px; }
+  .text-btn :global(svg) { width: 16px; height: 16px; }
 
   .error-msg {
     font-size: 0.78rem;
@@ -1906,10 +1885,10 @@
   .factor-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: var(--space-3);
     font-size: 0.68rem;
     color: var(--text-muted);
-    margin-bottom: 10px;
+    margin-bottom: var(--space-3);
   }
 
   .candidate-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1917,7 +1896,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
     border-radius: 6px;
-    padding: 9px 10px;
+    padding: var(--space-2) var(--space-3);
   }
   .candidate-row.winner { background: var(--accent-soft); border-color: var(--accent); }
   .candidate-top { display: flex; align-items: center; gap: 8px; }
@@ -1939,21 +1918,21 @@
   .surge-note {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     margin-top: 8px;
     font-size: 0.7rem;
     color: var(--risk-severe);
   }
-  .surge-note :global(svg) { width: 13px; height: 13px; flex-shrink: 0; }
+  .surge-note :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   /* ── Filtered out list ────────────────────────────────────────────────── */
 
-  .filtered-list { display: flex; flex-direction: column; gap: 6px; }
+  .filtered-list { display: flex; flex-direction: column; gap: var(--space-2); }
   .filtered-row {
     display: flex;
     justify-content: space-between;
-    gap: 10px;
-    padding: 7px 8px;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-2);
     border-radius: 6px;
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);

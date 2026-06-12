@@ -169,7 +169,7 @@
   $: peak = series.reduce((max, p) => (p.case_count > (max?.case_count ?? -1) ? p : max), null as OutbreakPoint | null);
 </script>
 
-<PageShell section="Data Explorer" title="Data Explorer">
+<PageShell title="Data Explorer">
   <div class="explorer-page">
     <div class="page-header">
       <h1 class="section-title">Data Explorer</h1>
@@ -258,7 +258,7 @@
 <style>
   .explorer-page { max-width: 920px; margin: 0 auto; width: 100%; }
 
-  .page-header { margin-bottom: 20px; }
+  .page-header { margin-bottom: var(--space-4); }
   .section-title {
     font-family: var(--serif);
     font-size: 1.6rem;
@@ -272,7 +272,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
-    margin-bottom: 20px;
+    margin-bottom: var(--space-4);
     padding-bottom: 16px;
     border-bottom: 1px solid var(--border-soft);
   }
@@ -294,7 +294,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
   }
 
@@ -307,16 +307,16 @@
     background: var(--accent-soft);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     margin-bottom: 16px;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .stat-row {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: var(--space-4);
   }
   .stat-card {
     background: var(--card);
@@ -371,11 +371,11 @@
     color: var(--text-faint);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border-soft);
   }
   .data-table td {
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border-soft);
     color: var(--text);
     font-variant-numeric: tabular-nums;

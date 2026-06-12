@@ -4,7 +4,7 @@
   import { ICONS } from '$lib/icons';
 </script>
 
-<PageShell section="Trends" title="Trends">
+<PageShell title="Trends">
   <ComingSoon
     title="Trends"
     description="Cross-disease trend comparison and growth-rate analysis."

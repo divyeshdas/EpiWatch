@@ -3,12 +3,11 @@
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { theme } from '$lib/stores/theme';
-  import Sidebar from '$lib/components/Sidebar.svelte';
   import Ticker from '$lib/components/Ticker.svelte';
+  import TopNav from '$lib/components/TopNav.svelte';
   import TopTabs from '$lib/components/TopTabs.svelte';
   import { downloadCsv } from '$lib/csv';
   import { ICONS } from '$lib/icons';
-  import { sidebarCollapsed, toggleSidebar } from '$lib/stores/sidebar';
   import { API_BASE, WS_BASE } from '$lib/api';
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -322,6 +321,13 @@
   }
   $: selectedDiseaseSeries = selectedEntry?.diseases.find(d => d.disease === selectedCountryDisease) ?? null;
 
+  // Editorial profile for the selected disease — every figure is read
+  // straight off selectedDiseaseSeries / diseases, nothing invented.
+  $: selectedDiseaseInfo = diseases.find(d => d.disease_name === selectedCountryDisease);
+  $: diseaseEditorial = (selectedDiseaseSeries && selectedEntry)
+    ? buildDiseaseEditorial(selectedDiseaseSeries, selectedEntry.country, selectedDiseaseInfo)
+    : null;
+
   $: allCombos = countryEntries.flatMap(c => c.diseases.map(d => ({ country: c.country, ...d })));
 
   $: globalStats = {
@@ -523,6 +529,75 @@
 
   function diseaseColor(slug: string): string {
     return DISEASE_COLORS[slug] ?? '#94a3b8';
+  }
+
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // Monthly data always lands on the 1st — split the ISO string directly so
+  // no Date/timezone conversion can roll the month back a day.
+  function monthYear(dateStr: string): string {
+    const [year, month] = dateStr.split('-');
+    const m = Number(month);
+    if (!year || !m || m < 1 || m > 12) return dateStr;
+    return `${MONTH_NAMES[m - 1]} ${year}`;
+  }
+
+  type EditorialStat = { label: string; value: string; sub?: string };
+  type DiseaseEditorial = { headline: string; summary: string[]; stats: EditorialStat[] };
+
+  // Builds the editorial profile for the selected (disease, country) pair —
+  // headline, prose summary, and stat strip, all derived from the same
+  // series/spikes data the chart renders. No invented figures.
+  function buildDiseaseEditorial(ds: DiseaseSeries, country: string, info: DiseaseInfo | undefined): DiseaseEditorial | null {
+    if (!ds.series.length) return null;
+
+    const totalCases = ds.series.reduce((sum, p) => sum + p.case_count, 0);
+    const totalDeaths = ds.series.reduce((sum, p) => sum + p.deaths, 0);
+
+    let peak = ds.series[0];
+    for (const p of ds.series) if (p.case_count > peak.case_count) peak = p;
+
+    const spikeCount = ds.spikes.length;
+    const sharpest = ds.spikes.reduce<SpikeDetection | null>(
+      (max, s) => (!max || s.z_score > max.z_score) ? s : max, null,
+    );
+
+    const label = diseaseLabel(ds.disease);
+    const yearFrom = ds.series[0].date.slice(0, 4);
+    const yearTo = ds.series[ds.series.length - 1].date.slice(0, 4);
+    const period = yearFrom === yearTo ? yearFrom : `${yearFrom} to ${yearTo}`;
+
+    const headline = sharpest && sharpest.severity !== 'LOW'
+      ? `${label} in ${country}: the ${monthYear(sharpest.date)} surge`
+      : `${label} in ${country}, ${period}`;
+
+    const summary: string[] = [];
+
+    let s1 = `Across ${period}, ${label} in ${country} totaled ${fmt(totalCases)} case${totalCases === 1 ? '' : 's'}`;
+    if (totalDeaths > 0) s1 += ` and ${fmt(totalDeaths)} death${totalDeaths === 1 ? '' : 's'}`;
+    s1 += `, peaking at ${fmt(peak.case_count)} cases in ${monthYear(peak.date)}.`;
+    summary.push(s1);
+
+    if (sharpest) {
+      summary.push(`The detector flagged ${spikeCount} spike${spikeCount === 1 ? '' : 's'}, the sharpest at ${sharpest.z_score.toFixed(1)} standard deviations in ${monthYear(sharpest.date)}.`);
+    } else {
+      summary.push('The detector has not flagged any spikes in this period.');
+    }
+
+    if (info) {
+      summary.push(`${label} is tracked across ${info.regions.length} region${info.regions.length === 1 ? '' : 's'} in the dataset, from ${monthYear(info.date_from)} to ${monthYear(info.date_to)}.`);
+    }
+
+    const stats: EditorialStat[] = [
+      { label: 'Total cases', value: fmt(totalCases) },
+      { label: 'Total deaths', value: fmt(totalDeaths) },
+      { label: 'Peak month', value: monthYear(peak.date), sub: `${fmt(peak.case_count)} cases` },
+      { label: 'Spikes detected', value: String(spikeCount) },
+      { label: 'Highest z-score', value: sharpest ? `${sharpest.z_score.toFixed(1)}σ` : '—', sub: sharpest ? monthYear(sharpest.date) : undefined },
+      { label: 'Regions tracked', value: info ? String(info.regions.length) : '—' },
+    ];
+
+    return { headline, summary, stats };
   }
 
   function riskColor(level: string): string {
@@ -952,21 +1027,6 @@
     renderCountryChart();
   }
 
-  // Resize charts after the sidebar collapses/expands — skip the initial
-  // run (the store's starting value), only react to actual toggles.
-  let sidebarReady = false;
-  $: if (browser) {
-    $sidebarCollapsed;
-    if (sidebarReady) {
-      setTimeout(() => {
-        mapChart?.resize();
-        trendChart?.resize();
-        countryChart?.resize();
-      }, 240);
-    } else {
-      sidebarReady = true;
-    }
-  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -1007,102 +1067,97 @@
 
 <div class="shell">
 
-  <!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
-  <Sidebar section="Surveillance" alertCount={alerts.length} />
+  <Ticker />
 
-  <!-- ── Main column ───────────────────────────────────────────────────────── -->
-  <div class="main">
-
-    <header class="topbar">
-      <button class="icon-btn menu-btn" aria-label="Toggle sidebar" on:click={toggleSidebar}>{@html ICONS.menu}</button>
-      <div class="search-box">
-        {@html ICONS.search}
-        <input
-          type="text"
-          placeholder="Search disease, country, or region…"
-          bind:value={searchQuery}
-          on:keydown={handleSearch}
-          on:focus={() => searchFocused = true}
-          on:blur={() => setTimeout(() => searchFocused = false, 150)}
-        />
-        <span class="kbd">↵</span>
-        {#if searchOpen}
-          <div class="search-dropdown">
-            {#if searchMatches.length === 0}
-              <div class="search-empty">No diseases, countries, or regions match "{searchQuery}"</div>
-            {:else}
-              {#each searchMatches as m, i (m.kind + m.id)}
-                <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
-                  <span class="search-match-label">{m.label}</span>
-                  <span class="search-match-sub">{m.sub}</span>
-                </button>
+  <TopNav alertCount={alerts.length}>
+    <div class="search-box">
+      {@html ICONS.search}
+      <input
+        type="text"
+        placeholder="Search disease, country, or region…"
+        bind:value={searchQuery}
+        on:keydown={handleSearch}
+        on:focus={() => searchFocused = true}
+        on:blur={() => setTimeout(() => searchFocused = false, 150)}
+      />
+      <span class="kbd">↵</span>
+      {#if searchOpen}
+        <div class="search-dropdown">
+          {#if searchMatches.length === 0}
+            <div class="search-empty">No diseases, countries, or regions match "{searchQuery}"</div>
+          {:else}
+            {#each searchMatches as m, i (m.kind + m.id)}
+              <button class="search-match {i === 0 ? 'top' : ''}" on:mousedown={() => selectSearchMatch(m)}>
+                <span class="search-match-label">{m.label}</span>
+                <span class="search-match-sub">{m.sub}</span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
+    <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
+    <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
+    <div class="topbar-action">
+      <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
+      {#if filtersOpen}
+        <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
+        <div class="filters-popover">
+          <label class="filter-field">
+            <span>Disease</span>
+            <select class="quiet-select" bind:value={mapDiseaseFilter}>
+              <option value="all">All Diseases</option>
+              {#each diseases as d}
+                <option value={d.disease_name}>{diseaseLabel(d.disease_name)}</option>
               {/each}
-            {/if}
-          </div>
-        {/if}
-      </div>
-      <div class="topbar-right">
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Risk Level</span>
+            <select class="quiet-select" bind:value={mapRiskFilter}>
+              <option value="all">All Risk Levels</option>
+              {#each Object.entries(RISK_LABELS) as [lvl, label]}
+                <option value={lvl}>{label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Region</span>
+            <select class="quiet-select" value={selectedCountry} on:change={onRegionFilterChange}>
+              {#each countryEntries as c}
+                <option value={c.country}>{c.country}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Alert Severity</span>
+            <select class="quiet-select" bind:value={alertSeverityFilter}>
+              <option value="all">All Severities</option>
+              {#each Object.entries(SEVERITY_LABELS) as [sev, label]}
+                <option value={sev}>{label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
+    </div>
+    <button
+      class="icon-btn panel-toggle-btn"
+      aria-label="Open country intelligence panel"
+      on:click={() => panelOpen = true}
+    >{@html ICONS.panel}</button>
+  </TopNav>
+
+  <div class="content">
+    <div class="content-main">
+
+      <div class="page-header">
+        <h1 class="section-title">Surveillance Overview</h1>
         <div class="data-updated">
           <span class="ws-dot {wsConnected ? 'connected' : ''}"></span>
           Data updated {lastUpdated ? timeAgo(lastUpdated.toISOString()) : '—'}
         </div>
-        <button class="topbar-btn" on:click={shareView}>{@html ICONS.share}<span>{shareCopied ? 'Link copied' : 'Share'}</span></button>
-        <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
-        <div class="topbar-action">
-          <button class="topbar-btn {filtersOpen ? 'active' : ''}" on:click={() => filtersOpen = !filtersOpen}>{@html ICONS.filter}<span>Filters</span></button>
-          {#if filtersOpen}
-            <div class="popover-overlay" role="presentation" on:click={() => filtersOpen = false}></div>
-            <div class="filters-popover">
-              <label class="filter-field">
-                <span>Disease</span>
-                <select class="quiet-select" bind:value={mapDiseaseFilter}>
-                  <option value="all">All Diseases</option>
-                  {#each diseases as d}
-                    <option value={d.disease_name}>{diseaseLabel(d.disease_name)}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="filter-field">
-                <span>Risk Level</span>
-                <select class="quiet-select" bind:value={mapRiskFilter}>
-                  <option value="all">All Risk Levels</option>
-                  {#each Object.entries(RISK_LABELS) as [lvl, label]}
-                    <option value={lvl}>{label}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="filter-field">
-                <span>Region</span>
-                <select class="quiet-select" value={selectedCountry} on:change={onRegionFilterChange}>
-                  {#each countryEntries as c}
-                    <option value={c.country}>{c.country}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="filter-field">
-                <span>Alert Severity</span>
-                <select class="quiet-select" bind:value={alertSeverityFilter}>
-                  <option value="all">All Severities</option>
-                  {#each Object.entries(SEVERITY_LABELS) as [sev, label]}
-                    <option value={sev}>{label}</option>
-                  {/each}
-                </select>
-              </label>
-            </div>
-          {/if}
-        </div>
-        <button
-          class="icon-btn panel-toggle-btn"
-          aria-label="Open country intelligence panel"
-          on:click={() => panelOpen = true}
-        >{@html ICONS.panel}</button>
       </div>
-    </header>
-
-    <Ticker />
-
-    <div class="content">
-      <div class="content-main">
 
         <TopTabs tabs={[
           { label: 'Overview', href: '/surveillance' },
@@ -1306,14 +1361,32 @@
             </div>
           </div>
 
-          <div class="detail-section">
-            <div class="detail-section-title">
-              Cases Over Time
-              <span class="detail-section-sub">{diseaseLabel(selectedCountryDisease)}</span>
-            </div>
+          <div class="detail-section editorial-section">
+            {#if diseaseEditorial}
+              <h3 class="editorial-headline">{diseaseEditorial.headline}</h3>
+              {#each diseaseEditorial.summary as para}
+                <p class="editorial-summary">{para}</p>
+              {/each}
+            {:else}
+              <div class="detail-section-title">
+                Cases Over Time
+                <span class="detail-section-sub">{diseaseLabel(selectedCountryDisease)}</span>
+              </div>
+            {/if}
             <div class="chart-wrap small">
               <div bind:this={countryEl} class="echarts-container chart-country"></div>
             </div>
+            {#if diseaseEditorial}
+              <div class="editorial-stats">
+                {#each diseaseEditorial.stats as stat}
+                  <div class="editorial-stat">
+                    <div class="stat-label">{stat.label}</div>
+                    <div class="stat-value">{stat.value}</div>
+                    {#if stat.sub}<div class="stat-sub">{stat.sub}</div>{/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div class="detail-section">
@@ -1358,7 +1431,6 @@
         {/if}
       </aside>
     </div>
-  </div>
 </div>
 
 <style>
@@ -1369,6 +1441,7 @@
 
   .shell {
     display: flex;
+    flex-direction: column;
     min-height: 100vh;
     font-family: var(--sans);
     font-size: 14px;
@@ -1376,21 +1449,18 @@
     color: var(--text);
   }
 
-  /* ── Main column ──────────────────────────────────────────────────────── */
-
-  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-  .topbar {
+  .page-header {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    height: var(--topbar-h);
-    padding: 0 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-panel);
-    position: sticky;
-    top: 0;
-    z-index: 10;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+  .section-title {
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin: 0;
   }
 
   .icon-btn {
@@ -1416,13 +1486,13 @@
     gap: 8px;
     flex: 1;
     max-width: 440px;
-    padding: 7px 12px;
+    padding: var(--space-2) var(--space-3);
     border-radius: 6px;
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     color: var(--text-muted);
   }
-  .search-box :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .search-box :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
   .search-box input {
     flex: 1;
     border: none;
@@ -1480,16 +1550,15 @@
     letter-spacing: 0.06em;
   }
   .search-empty {
-    padding: 10px 12px;
+    padding: var(--space-3) var(--space-3);
     font-size: 0.83rem;
     color: var(--text-faint);
   }
 
-  .topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
   .data-updated {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--space-2);
     font-size: 0.75rem;
     color: var(--text-muted);
     white-space: nowrap;
@@ -1512,8 +1581,8 @@
   .topbar-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 7px 12px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border-radius: 6px;
     border: 1px solid var(--border);
     background: transparent;
@@ -1524,7 +1593,7 @@
     white-space: nowrap;
   }
   .topbar-btn:hover { background: var(--bg-hover); color: var(--text); }
-  .topbar-btn :global(svg) { width: 14px; height: 14px; }
+  .topbar-btn :global(svg) { width: 16px; height: 16px; }
   .topbar-btn.active { background: var(--bg-hover); color: var(--text); border-color: var(--accent); }
 
   .topbar-action { position: relative; }
@@ -1545,7 +1614,7 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
     min-width: 200px;
   }
   .filter-field {
@@ -1579,14 +1648,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   /* ── Panels ───────────────────────────────────────────────────────────── */
 
@@ -1594,14 +1663,14 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
   }
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 14px;
+    margin-bottom: var(--space-4);
   }
   .panel-header h2 {
     font-size: 1.125rem;
@@ -1614,7 +1683,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 8px;
+    padding: var(--space-1) var(--space-2);
     font-family: var(--sans);
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -1637,7 +1706,7 @@
     letter-spacing: 0.08em;
     font-size: 0.6875rem;
   }
-  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: var(--space-2); }
   .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
   .map-wrap {
@@ -1679,7 +1748,7 @@
   .stat-card {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: var(--space-3);
     padding: 12px;
     border-radius: var(--radius-sm);
     background: var(--bg-sunken);
@@ -1688,8 +1757,8 @@
   }
   .stat-card:hover { border-color: var(--border); transform: translateY(-2px); }
   .stat-card :global(svg) {
-    width: 17px;
-    height: 17px;
+    width: 16px;
+    height: 16px;
     color: var(--accent);
     flex-shrink: 0;
     margin-top: 2px;
@@ -1752,22 +1821,22 @@
   .panel-link {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     margin-top: 12px;
     font-size: 0.78rem;
     color: var(--accent);
     text-decoration: none;
   }
-  .panel-link :global(svg) { width: 13px; height: 13px; }
+  .panel-link :global(svg) { width: 16px; height: 16px; }
   .panel-link.inert { color: var(--text-faint); pointer-events: none; }
 
-  .hotspot-list { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .hotspot-list { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
   .hotspot-row {
     display: grid;
     grid-template-columns: 20px 1fr 60px 48px;
     align-items: center;
-    gap: 10px;
-    padding: 9px 8px;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-2);
     border-radius: 6px;
     border: none;
     background: transparent;
@@ -1811,7 +1880,7 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
     position: sticky;
     top: calc(var(--topbar-h) + 8px);
     max-height: calc(100vh - var(--topbar-h) - 16px);
@@ -1830,7 +1899,7 @@
     border: 1px solid var(--border-soft);
   }
   .risk-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-  .risk-score { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; margin-top: 6px; }
+  .risk-score { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; margin-top: var(--space-2); }
   .risk-number { font-size: 2.4rem; font-weight: 700; color: var(--text); }
   .risk-max { font-size: 1rem; color: var(--text-faint); }
   .risk-level { font-size: 0.83rem; font-weight: 600; margin-top: 4px; }
@@ -1844,12 +1913,12 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
-    padding: 10px;
+    padding: var(--space-3);
   }
   .detail-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .detail-value { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
 
-  .detail-section { padding-top: 14px; border-top: 1px solid var(--border-soft); }
+  .detail-section { padding-top: var(--space-4); border-top: 1px solid var(--border-soft); }
   .detail-section-title {
     font-size: 0.6875rem;
     font-weight: 600;
@@ -1863,7 +1932,7 @@
     font-weight: 400;
     color: var(--text-faint);
     letter-spacing: normal;
-    margin-left: 6px;
+    margin-left: var(--space-2);
   }
   .detail-section-title-row {
     display: flex;
@@ -1872,6 +1941,30 @@
     margin-bottom: 8px;
   }
   .detail-section-title-row .detail-section-title { margin-bottom: 0; }
+
+  .editorial-headline {
+    font-family: var(--serif);
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 var(--space-2) 0;
+    color: var(--text);
+  }
+  .editorial-summary {
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin: 0 0 var(--space-2) 0;
+  }
+  .editorial-section .chart-wrap { margin-top: var(--space-3); }
+  .editorial-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-3) var(--space-2);
+    margin-top: var(--space-3);
+  }
+  .editorial-stat { display: flex; flex-direction: column; }
+  .editorial-stat .stat-value { font-size: 1.05rem; }
 
   .disease-table { display: flex; flex-direction: column; gap: 2px; }
   .disease-table-head,
@@ -1893,14 +1986,14 @@
     border: none;
     background: transparent;
     border-radius: 6px;
-    padding: 7px 8px;
+    padding: var(--space-2) var(--space-2);
     font-family: var(--sans);
     cursor: pointer;
     text-align: left;
   }
   .disease-row:hover { background: var(--bg-hover); }
   .disease-row.active { background: var(--accent-soft); }
-  .disease-name { display: flex; align-items: center; gap: 7px; font-size: 0.8rem; color: var(--text); min-width: 0; }
+  .disease-name { display: flex; align-items: center; gap: var(--space-2); font-size: 0.8rem; color: var(--text); min-width: 0; }
   .disease-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .disease-cases { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.8rem; color: var(--text); text-align: right; }
   .disease-change { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.74rem; text-align: right; }
@@ -1909,7 +2002,7 @@
   .text-btn {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-2);
     border: none;
     background: transparent;
     color: var(--accent);
@@ -1919,7 +2012,7 @@
     padding: 0;
   }
   .text-btn:disabled { color: var(--text-faint); cursor: default; }
-  .text-btn :global(svg) { width: 12px; height: 12px; }
+  .text-btn :global(svg) { width: 16px; height: 16px; }
   .text-btn:disabled :global(svg) { animation: spin 1s linear infinite; }
   @keyframes spin {
     to { transform: rotate(360deg); }
@@ -1927,7 +2020,7 @@
 
   .scan-msg { font-size: 0.74rem; color: var(--accent); margin-bottom: 8px; }
 
-  .alert-list { display: flex; flex-direction: column; gap: 6px; }
+  .alert-list { display: flex; flex-direction: column; gap: var(--space-2); }
   .alert-item {
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
@@ -1957,7 +2050,7 @@
     padding-left: 1.1rem;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-2);
     font-size: 0.8rem;
     color: var(--text-muted);
     line-height: 1.45;
@@ -1969,14 +2062,14 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 10px;
+    padding: var(--space-3);
     border-radius: 6px;
     border: 1px solid var(--border);
     color: var(--text-muted);
     text-decoration: none;
     font-size: 0.83rem;
   }
-  .full-report-btn :global(svg) { width: 14px; height: 14px; }
+  .full-report-btn :global(svg) { width: 16px; height: 16px; }
   .full-report-btn.inert { opacity: 0.5; pointer-events: none; }
 
   /* ── Responsive ───────────────────────────────────────────────────────── */

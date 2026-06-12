@@ -4,7 +4,7 @@
   import { ICONS } from '$lib/icons';
 </script>
 
-<PageShell section="Global Map" title="Global Map">
+<PageShell title="Global Map">
   <ComingSoon
     title="Global Map"
     description="A worldwide outbreak choropleth across all tracked diseases."

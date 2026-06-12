@@ -4,7 +4,7 @@
   import { ICONS } from '$lib/icons';
 </script>
 
-<PageShell section="Resources" title="Resources">
+<PageShell title="Resources">
   <ComingSoon
     title="Resources"
     description="Methodology, data sources, and references."

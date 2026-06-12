@@ -128,7 +128,7 @@
   }
 </script>
 
-<PageShell section="Emergency Response" title="Routes">
+<PageShell title="Routes">
   <svelte:fragment slot="topbar-right">
     <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
   </svelte:fragment>
@@ -233,7 +233,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
   }
 
@@ -241,20 +241,20 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .panel {
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
   }
 
   .empty-note {

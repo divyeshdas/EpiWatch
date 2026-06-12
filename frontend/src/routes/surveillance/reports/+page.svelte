@@ -144,7 +144,7 @@
   });
 </script>
 
-<PageShell section="Surveillance" title="Reports">
+<PageShell title="Reports">
   <svelte:fragment slot="topbar-right">
     <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
   </svelte:fragment>
@@ -299,14 +299,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .empty-note {
     font-size: 0.85rem;
@@ -347,7 +347,7 @@
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
   }
   .panel-header h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 12px; color: var(--text); }
 
@@ -374,7 +374,7 @@
   .data-table td.num, .data-table th.num { text-align: right; }
   .data-table tbody tr:hover { background: var(--bg-hover); }
 
-  .disease-name { display: flex; align-items: center; gap: 6px; font-variant-numeric: normal; }
+  .disease-name { display: flex; align-items: center; gap: var(--space-2); font-variant-numeric: normal; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
   .coord-cell { font-family: var(--mono); color: var(--text-muted); white-space: nowrap; }
@@ -383,8 +383,8 @@
   .alert-row {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    padding: 10px 4px;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-1);
     border-bottom: 1px solid var(--border-soft);
   }
   .alert-row:last-child { border-bottom: none; }
@@ -392,7 +392,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-top: 5px;
+    margin-top: var(--space-1);
     flex-shrink: 0;
   }
   .alert-body { flex: 1; min-width: 0; }

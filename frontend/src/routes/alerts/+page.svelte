@@ -105,7 +105,7 @@
   }
 </script>
 
-<PageShell section="Alerts" title="Alerts" alertCount={alerts.length}>
+<PageShell title="Alerts" alertCount={alerts.length}>
   <svelte:fragment slot="topbar-right">
     <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
   </svelte:fragment>
@@ -191,7 +191,7 @@
     width: 100%;
   }
 
-  .page-header { margin-bottom: 20px; }
+  .page-header { margin-bottom: var(--space-4); }
   .section-title {
     font-family: var(--serif);
     font-size: 1.6rem;
@@ -202,12 +202,12 @@
   .section-sub {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: var(--space-3);
     font-size: 0.85rem;
     color: var(--text-muted);
     margin: 0;
   }
-  .ws-indicator { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; }
+  .ws-indicator { display: flex; align-items: center; gap: var(--space-2); font-size: 0.75rem; }
   .ws-dot {
     width: 7px;
     height: 7px;
@@ -228,7 +228,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
-    margin-bottom: 20px;
+    margin-bottom: var(--space-4);
     padding-bottom: 16px;
     border-bottom: 1px solid var(--border-soft);
   }
@@ -250,7 +250,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
   }
 
@@ -263,10 +263,10 @@
     background: var(--accent-soft);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-sm);
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     margin-bottom: 16px;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .empty-note {
     font-size: 0.85rem;
@@ -285,7 +285,7 @@
     border-radius: var(--radius-sm);
     padding: 12px 14px;
   }
-  .alert-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .alert-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .alert-sev { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
   .alert-disease { font-size: 0.8rem; font-weight: 500; color: var(--text); }
   .alert-region { font-size: 0.78rem; color: var(--text-muted); }
@@ -295,11 +295,11 @@
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
   }
-  .alert-msg { font-size: 0.85rem; color: var(--text); margin-top: 6px; line-height: 1.5; }
+  .alert-msg { font-size: 0.85rem; color: var(--text); margin-top: var(--space-2); line-height: 1.5; }
   .alert-meta {
     display: flex;
-    gap: 14px;
-    margin-top: 6px;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
     font-size: 0.74rem;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;

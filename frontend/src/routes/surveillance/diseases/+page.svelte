@@ -96,7 +96,7 @@
   });
 </script>
 
-<PageShell section="Surveillance" title="Diseases">
+<PageShell title="Diseases">
   <svelte:fragment slot="topbar-right">
     <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
   </svelte:fragment>
@@ -178,14 +178,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .empty-note {
     font-size: 0.85rem;
@@ -203,7 +203,7 @@
   .profile-card {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -227,7 +227,7 @@
     color: var(--text);
     flex: 1;
   }
-  .profile-header :global(svg) { width: 15px; height: 15px; color: var(--text-faint); flex-shrink: 0; }
+  .profile-header :global(svg) { width: 16px; height: 16px; color: var(--text-faint); flex-shrink: 0; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
   .profile-meta { font-size: 0.78rem; color: var(--text-muted); }
@@ -235,8 +235,8 @@
   .profile-stats {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-    padding: 10px 0;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
     border-top: 1px solid var(--border-soft);
     border-bottom: 1px solid var(--border-soft);
   }

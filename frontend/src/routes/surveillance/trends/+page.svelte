@@ -196,7 +196,7 @@
   $: if (chart && echarts && seriesByDisease) renderChart();
 </script>
 
-<PageShell section="Surveillance" title="Trends">
+<PageShell title="Trends">
   <svelte:fragment slot="topbar-right">
     <button class="topbar-btn" on:click={downloadCurrentView}>{@html ICONS.download}<span>Download</span></button>
   </svelte:fragment>
@@ -288,7 +288,7 @@
     background: var(--bg-sunken);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
   }
 
@@ -296,20 +296,20 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     border: 1px solid var(--danger);
     background: rgba(220, 79, 69, 0.1);
     color: var(--danger);
     font-size: 0.83rem;
   }
-  .error-banner :global(svg) { width: 15px; height: 15px; flex-shrink: 0; }
+  .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .panel {
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: var(--space-4);
   }
   .panel-header h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 12px; color: var(--text); }
 
@@ -340,7 +340,7 @@
   .stat-label {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     font-size: 0.68rem;
     color: var(--text-faint);
     text-transform: uppercase;

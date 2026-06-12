@@ -52,6 +52,15 @@ html {
   --radius: 12px;
   --radius-sm: 8px;
 
+  /* Spacing scale — all paddings, margins, and gaps snap to these. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
   /* Animation */
   --ease-hover: 180ms ease;
   --ease-drawer: 260ms ease;

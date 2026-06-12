@@ -16,7 +16,7 @@
   .coming-soon {
     max-width: 480px;
     margin: 10vh auto 0;
-    padding: 40px 32px;
+    padding: var(--space-12) var(--space-8);
     text-align: center;
     background: var(--card);
     border: 1px solid var(--border);
@@ -31,9 +31,9 @@
     border-radius: 10px;
     background: var(--accent-soft);
     color: var(--accent);
-    margin-bottom: 18px;
+    margin-bottom: var(--space-4);
   }
-  .cs-icon :global(svg) { width: 24px; height: 24px; }
+  .cs-icon :global(svg) { width: 20px; height: 20px; }
   .cs-eyebrow {
     display: block;
     font-size: 0.7rem;
@@ -41,7 +41,7 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--text-faint);
-    margin-bottom: 10px;
+    margin-bottom: var(--space-3);
   }
   .cs-title {
     font-family: var(--serif);
@@ -59,7 +59,7 @@
   .cs-back {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     font-size: 0.83rem;
     color: var(--accent);
     text-decoration: none;
