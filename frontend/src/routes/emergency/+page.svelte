@@ -1272,7 +1272,7 @@
   }
   .section-title {
     font-family: var(--serif);
-    font-size: 1.6rem;
+    font-size: 1.75rem;
     font-weight: 600;
     margin: 0;
   }
@@ -1497,7 +1497,7 @@
     margin-bottom: var(--space-4);
   }
   .panel-header h2 {
-    font-size: 1.125rem;
+    font-size: 1.25rem;
     font-weight: 600;
     margin: 0;
     letter-spacing: -0.01em;
@@ -1508,7 +1508,7 @@
     align-items: center;
     gap: 16px;
     flex-wrap: wrap;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     color: var(--text-muted);
     margin-bottom: 12px;
   }
@@ -1552,7 +1552,7 @@
     background: var(--card);
     border: 1px solid var(--border);
     color: var(--text);
-    font-size: 0.75rem;
+    font-size: 0.82rem;
     line-height: 1.5;
     border-radius: var(--radius-sm);
     box-shadow: none;
@@ -1619,7 +1619,7 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: var(--space-2) var(--space-4);
-    font-size: 0.78rem;
+    font-size: 0.85rem;
     color: var(--text-muted);
     pointer-events: none;
     z-index: 1000;
@@ -1659,7 +1659,7 @@
     font-family: var(--sans);
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum';
-    font-size: 1.35rem;
+    font-size: 1.5rem;
     font-weight: 600;
     margin-top: 3px;
     color: var(--text);
@@ -1678,7 +1678,7 @@
   .hospitals-panel { flex: 1.7; min-width: 0; display: flex; flex-direction: column; }
   .emergencies-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
-  .empty-note { font-size: 0.8rem; color: var(--text-faint); padding: 16px 8px; text-align: center; }
+  .empty-note { font-size: 0.88rem; color: var(--text-faint); padding: 16px 8px; text-align: center; }
 
   /* ── Hospital table ───────────────────────────────────────────────────── */
 
@@ -1704,14 +1704,14 @@
     transition: background 0.15s ease;
   }
   .hospital-row.active { background: var(--accent-soft); }
-  .hospital-name { font-size: 0.83rem; color: var(--text); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .hospital-spec { font-size: 0.68rem; color: var(--text-faint); text-transform: capitalize; }
-  .hospital-region { font-size: 0.78rem; color: var(--text-muted); text-align: right; }
+  .hospital-name { font-size: 0.93rem; color: var(--text); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .hospital-spec { font-size: 0.74rem; color: var(--text-faint); text-transform: capitalize; }
+  .hospital-region { font-size: 0.87rem; color: var(--text-muted); text-align: right; }
   .capacity-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
-  .capacity-text { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.76rem; color: var(--text); }
+  .capacity-text { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.85rem; color: var(--text); }
   .capacity-bar-wrap { width: 100%; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
   .capacity-bar { display: block; height: 100%; border-radius: 2px; transition: width 0.4s ease; }
-  .load-cell { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.83rem; font-weight: 600; text-align: right; }
+  .load-cell { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.93rem; font-weight: 600; text-align: right; }
 
   /* ── Recent emergencies ───────────────────────────────────────────────── */
 
@@ -1732,9 +1732,9 @@
   }
   .emergency-row:hover { background: var(--bg-hover); }
   .emergency-top { display: flex; justify-content: space-between; align-items: center; }
-  .emergency-cond { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.03em; }
-  .emergency-time { font-size: 0.66rem; color: var(--text-faint); font-family: var(--mono); }
-  .emergency-detail { font-size: 0.78rem; color: var(--text-muted); }
+  .emergency-cond { font-size: 0.82rem; font-weight: 700; letter-spacing: 0.03em; }
+  .emergency-time { font-size: 0.7rem; color: var(--text-faint); font-family: var(--mono); }
+  .emergency-detail { font-size: 0.87rem; color: var(--text-muted); }
 
   .row-pulse { animation: rowFade 0.4s ease-out, rowPulse 0.7s ease-out 2; }
   @keyframes rowFade {
@@ -1772,7 +1772,7 @@
   .detail-panel::-webkit-scrollbar { width: 6px; }
   .detail-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-  .detail-header h2 { font-size: 1.25rem; font-weight: 600; margin: 0; }
+  .detail-header h2 { font-size: 1.35rem; font-weight: 600; margin: 0; }
 
   .risk-score-block {
     text-align: center;
@@ -1782,8 +1782,8 @@
     border: 1px solid var(--border-soft);
   }
   .risk-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-  .risk-level { font-size: 0.83rem; font-weight: 600; margin-top: 4px; }
-  .winner-name { font-family: var(--sans); font-size: 1.25rem; font-weight: 700; color: var(--text); margin-top: var(--space-2); }
+  .risk-level { font-size: 0.92rem; font-weight: 600; margin-top: 4px; }
+  .winner-name { font-family: var(--sans); font-size: 1.35rem; font-weight: 700; color: var(--text); margin-top: var(--space-2); }
 
   .detail-grid {
     display: grid;
@@ -1797,7 +1797,7 @@
     padding: var(--space-3);
   }
   .detail-label { font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-  .detail-value { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 1.05rem; font-weight: 600; margin-top: 4px; color: var(--text); }
+  .detail-value { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 1.15rem; font-weight: 600; margin-top: 4px; color: var(--text); }
 
   .detail-section { padding-top: var(--space-4); border-top: 1px solid var(--border-soft); }
   .detail-section-title {
@@ -1823,7 +1823,7 @@
     background: var(--bg-sunken);
     color: var(--text-muted);
     font-family: var(--sans);
-    font-size: 0.8rem;
+    font-size: 0.88rem;
     cursor: pointer;
     transition: all 0.15s ease;
   }
@@ -1848,7 +1848,7 @@
     background: var(--accent-soft);
     color: var(--accent);
     font-family: var(--sans);
-    font-size: 0.85rem;
+    font-size: 0.92rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -1865,14 +1865,14 @@
     background: transparent;
     color: var(--accent);
     font-family: var(--sans);
-    font-size: 0.78rem;
+    font-size: 0.85rem;
     cursor: pointer;
     padding: var(--space-2);
   }
   .text-btn :global(svg) { width: 16px; height: 16px; }
 
   .error-msg {
-    font-size: 0.78rem;
+    font-size: 0.85rem;
     color: var(--danger);
     background: rgba(220, 79, 69, 0.1);
     border: 1px solid rgba(220, 79, 69, 0.25);
@@ -1900,10 +1900,10 @@
   }
   .candidate-row.winner { background: var(--accent-soft); border-color: var(--accent); }
   .candidate-top { display: flex; align-items: center; gap: 8px; }
-  .candidate-rank { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.7rem; color: var(--text-faint); }
-  .candidate-name { flex: 1; font-size: 0.83rem; font-weight: 500; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .candidate-score { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.83rem; font-weight: 600; color: var(--text); }
-  .candidate-meta { font-size: 0.7rem; color: var(--text-faint); margin-top: 2px; }
+  .candidate-rank { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.75rem; color: var(--text-faint); }
+  .candidate-name { flex: 1; font-size: 0.93rem; font-weight: 500; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .candidate-score { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.93rem; font-weight: 600; color: var(--text); }
+  .candidate-meta { font-size: 0.76rem; color: var(--text-faint); margin-top: 2px; }
 
   .factor-bar {
     display: flex;
@@ -1920,7 +1920,7 @@
     align-items: center;
     gap: var(--space-2);
     margin-top: 8px;
-    font-size: 0.7rem;
+    font-size: 0.76rem;
     color: var(--risk-severe);
   }
   .surge-note :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
@@ -1936,7 +1936,7 @@
     border-radius: 6px;
     background: var(--bg-sunken);
     border: 1px solid var(--border-soft);
-    font-size: 0.76rem;
+    font-size: 0.83rem;
   }
   .filtered-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .filtered-reason { color: var(--text-faint); text-align: right; flex-shrink: 0; }

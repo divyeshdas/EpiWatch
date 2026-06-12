@@ -194,7 +194,7 @@
   .page-header { margin-bottom: var(--space-4); }
   .section-title {
     font-family: var(--serif);
-    font-size: 1.6rem;
+    font-size: 1.75rem;
     font-weight: 600;
     margin: 0 0 8px;
     color: var(--text);
@@ -203,11 +203,11 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     color: var(--text-muted);
     margin: 0;
   }
-  .ws-indicator { display: flex; align-items: center; gap: var(--space-2); font-size: 0.75rem; }
+  .ws-indicator { display: flex; align-items: center; gap: var(--space-2); font-size: 0.8rem; }
   .ws-dot {
     width: 7px;
     height: 7px;
@@ -243,7 +243,7 @@
   }
   .quiet-select {
     font-family: var(--sans);
-    font-size: 0.83rem;
+    font-size: 0.92rem;
     text-transform: none;
     letter-spacing: normal;
     color: var(--text);
@@ -258,7 +258,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.83rem;
+    font-size: 0.92rem;
     color: var(--danger);
     background: var(--accent-soft);
     border: 1px solid var(--border-soft);
@@ -269,7 +269,7 @@
   .error-banner :global(svg) { width: 16px; height: 16px; flex-shrink: 0; }
 
   .empty-note {
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     color: var(--text-faint);
     padding: 32px 8px;
     text-align: center;
@@ -287,20 +287,20 @@
   }
   .alert-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .alert-sev { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-  .alert-disease { font-size: 0.8rem; font-weight: 500; color: var(--text); }
-  .alert-region { font-size: 0.78rem; color: var(--text-muted); }
+  .alert-disease { font-size: 0.9rem; font-weight: 500; color: var(--text); }
+  .alert-region { font-size: 0.87rem; color: var(--text-muted); }
   .alert-time {
     margin-left: auto;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
   }
-  .alert-msg { font-size: 0.85rem; color: var(--text); margin-top: var(--space-2); line-height: 1.5; }
+  .alert-msg { font-size: 0.95rem; color: var(--text); margin-top: var(--space-2); line-height: 1.5; }
   .alert-meta {
     display: flex;
     gap: var(--space-3);
     margin-top: var(--space-2);
-    font-size: 0.74rem;
+    font-size: 0.8rem;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
   }

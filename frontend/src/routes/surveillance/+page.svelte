@@ -1994,7 +1994,7 @@
     text-align: left;
   }
   .disease-row:hover { background: var(--bg-hover); }
-  .disease-row.active { background: var(--accent-soft); }
+  .disease-row.active { background: var(--nav-active-soft); }
   .disease-name { display: flex; align-items: center; gap: var(--space-2); font-size: 0.8rem; color: var(--text); min-width: 0; }
   .disease-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .disease-cases { font-family: var(--sans); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-size: 0.8rem; color: var(--text); text-align: right; }
